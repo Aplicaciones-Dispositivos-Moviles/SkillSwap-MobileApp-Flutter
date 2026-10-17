@@ -1,0 +1,3 @@
+00:00 +0: loading C:/dev/SkillSwap-MobileApp-Flutter/test/widget_test.dart
+00:00 +0: AuthUser lee la respuesta de sign-in y la vuelve a escribir
+00:00 +1: All tests passed!
