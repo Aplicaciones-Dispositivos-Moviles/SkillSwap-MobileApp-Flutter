@@ -1,26 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
-import 'providers/session_provider.dart';
-import 'services/api_client.dart';
-import 'services/auth_service.dart';
-import 'theme/app_theme.dart';
-import 'views/home_view.dart';
-import 'views/login_view.dart';
+import 'iam/application/bloc/session_bloc.dart';
+import 'iam/presentation/views/login_view.dart';
+import 'service_locator.dart';
+import 'shared/infrastructure/network/session_token.dart';
+import 'shared/presentation/design/app_theme.dart';
+import 'shared/presentation/views/main_layout.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  setupServiceLocator();
 
-  final api = ApiClient();
-  final session = SessionProvider(api, AuthService(api));
-  await session.restore(); // recupera la sesión guardada en el teléfono
+  final session = getIt<SessionBloc>();
+  // Si el backend rechaza el token (401), la app vuelve al login
+  getIt<SessionToken>().onExpired = () => session.add(const SessionExpired());
 
   runApp(
-    MultiProvider(
-      providers: [
-        Provider<ApiClient>.value(value: api),
-        ChangeNotifierProvider<SessionProvider>.value(value: session),
-      ],
+    BlocProvider<SessionBloc>.value(
+      value: session..add(const SessionRestoreRequested()), // recupera la sesión guardada en el teléfono
       child: const SkillSwapVerifierApp(),
     ),
   );
@@ -31,12 +29,20 @@ class SkillSwapVerifierApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final session = context.watch<SessionProvider>();
     return MaterialApp(
       title: 'SkillSwap Verificador',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
-      home: session.user == null ? const LoginView() : const HomeView(),
+      home: BlocBuilder<SessionBloc, SessionState>(
+        // Solo cambia de pantalla al entrar o salir; el login maneja sus propios estados
+        buildWhen: (previous, current) => (previous is Authenticated) != (current is Authenticated) ||
+            previous is SessionUnknown,
+        builder: (context, state) => switch (state) {
+          SessionUnknown() => const Scaffold(body: Center(child: CircularProgressIndicator())),
+          Authenticated(:final user) => MainLayout(key: ValueKey(user.id)),
+          _ => const LoginView(),
+        },
+      ),
     );
   }
 }
