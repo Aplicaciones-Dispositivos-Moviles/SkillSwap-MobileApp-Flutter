@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'colors.dart';
+import 'app_colors.dart';
 
 // Tema claro con Inter. Escala tipográfica del informe: Display 28, H1 24, H2 20, Title 16, Body 16/14, Caption 12.
 class AppTheme {
