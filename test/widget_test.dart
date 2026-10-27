@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:skillswap_verifier/models/auth_user.dart';
+import 'package:skillswap_verifier/iam/domain/models/auth_user.dart';
 
 void main() {
   test('AuthUser lee la respuesta de sign-in y la vuelve a escribir', () {
