@@ -25,6 +25,7 @@ class CasesBloc extends Bloc<CasesEvent, CasesState> {
     required this.recognitionRepository,
   }) : super(const CasesInitial()) {
     on<CasesRequested>(_onRequested);
+    on<AvailabilityChanged>(_onAvailabilityChanged);
   }
 
   Future<void> _onRequested(CasesRequested event, Emitter<CasesState> emit) async {
@@ -49,5 +50,26 @@ class CasesBloc extends Bloc<CasesEvent, CasesState> {
     } catch (e) {
       emit(CasesError(ApiException.from(e, 'No se pudieron cargar tus casos').message));
     }
+  }
+
+  // T72 · US23: cambia la disponibilidad; si falla conserva el valor anterior y avisa el error.
+  Future<void> _onAvailabilityChanged(AvailabilityChanged event, Emitter<CasesState> emit) async {
+    final current = state;
+    if (current is! CasesLoaded || current.updatingAvailability || current.profile.suspended) return;
+    emit(current.copyWith(updatingAvailability: true));
+    try {
+      final profile = await caseRepository.updateAvailability(event.available);
+      emit(_latest(current).copyWith(profile: profile));
+    } catch (e) {
+      emit(_latest(current).copyWith(
+        availabilityError: ApiException.from(e, 'No se pudo actualizar tu disponibilidad').message,
+      ));
+    }
+  }
+
+  // Si mientras se guardaba se recargó el inicio, se parte del estado más reciente y no del anterior.
+  CasesLoaded _latest(CasesLoaded fallback) {
+    final latest = state;
+    return latest is CasesLoaded ? latest : fallback;
   }
 }
