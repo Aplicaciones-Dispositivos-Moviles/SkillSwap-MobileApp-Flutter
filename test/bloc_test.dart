@@ -1,11 +1,15 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:skillswap_verifier/assessment/application/bloc/case_review_bloc.dart';
+import 'package:skillswap_verifier/assessment/application/bloc/cases_bloc.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verification_case.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verifier_profile.dart';
 import 'package:skillswap_verifier/assessment/domain/repositories/verification_case_repository.dart';
 import 'package:skillswap_verifier/iam/application/bloc/session_bloc.dart';
 import 'package:skillswap_verifier/iam/domain/models/auth_user.dart';
 import 'package:skillswap_verifier/iam/domain/repositories/auth_repository.dart';
+import 'package:skillswap_verifier/recognition/domain/models/shareable_credential.dart';
+import 'package:skillswap_verifier/recognition/domain/models/wallet.dart';
+import 'package:skillswap_verifier/recognition/domain/repositories/recognition_repository.dart';
 import 'package:skillswap_verifier/reputation/application/bloc/metrics_bloc.dart';
 import 'package:skillswap_verifier/reputation/domain/models/platform_metrics.dart';
 import 'package:skillswap_verifier/reputation/domain/models/verifier_reliability.dart';
@@ -32,7 +36,15 @@ VerificationCase _case({String status = 'Assigned', String? decision}) => Verifi
       'decision': decision, 'appealCount': 0,
     });
 
+VerifierProfile _profile({bool available = false, bool suspended = false}) => VerifierProfile.fromJson({
+      'id': 1, 'verifierUserId': 7, 'skillTags': ['sql'], 'available': available, 'verified': true,
+      'rating': 4.5, 'reviewCount': 3, 'suspended': suspended,
+    });
+
 class FakeCaseRepository implements VerificationCaseRepository {
+  VerifierProfile? profile;
+  bool failAvailability = false;
+  bool? sentAvailability;
   String? sentDecision;
   String? sentNotes;
   bool alreadyResolved = false;
@@ -52,7 +64,29 @@ class FakeCaseRepository implements VerificationCaseRepository {
   Future<List<VerificationCase>> getAssignedCases() async => [_case()];
 
   @override
-  Future<VerifierProfile?> getMyProfile() async => null;
+  Future<VerifierProfile?> getMyProfile() async => profile;
+
+  @override
+  Future<VerifierProfile> updateAvailability(bool available) async {
+    if (failAvailability) throw const ApiException('No se pudo actualizar tu disponibilidad', status: 500);
+    sentAvailability = available;
+    return _profile(available: available);
+  }
+}
+
+class FakeRecognitionRepository implements RecognitionRepository {
+  @override
+  Future<Wallet?> getWallet(int userId) async => null;
+
+  @override
+  Future<List<CreditTransaction>> getTransactions(int userId) async => const [];
+
+  @override
+  Future<List<ShareableCredential>> getShareableCredentials() async => const [];
+
+  @override
+  Future<ShareableCredential> createShareableCredential(String skillTag) async =>
+      throw UnimplementedError('No se usa en estas pruebas');
 }
 
 class FakeReputationRepository implements ReputationRepository {
@@ -150,6 +184,62 @@ void main() {
       final bloc = MetricsBloc(reputationRepository: FakeReputationRepository(senior: false))
         ..add(const MetricsRequested());
       await expectLater(bloc.stream, emitsInOrder([isA<MetricsLoading>(), isA<MetricsForbidden>()]));
+      await bloc.close();
+    });
+  });
+
+  group('CasesBloc · disponibilidad', () {
+    CasesBloc buildBloc(FakeCaseRepository repo) => CasesBloc(
+          userId: 7,
+          caseRepository: repo,
+          reputationRepository: FakeReputationRepository(senior: false),
+          recognitionRepository: FakeRecognitionRepository(),
+        );
+
+    test('activa la disponibilidad y actualiza el perfil', () async {
+      final repo = FakeCaseRepository()..profile = _profile();
+      final bloc = buildBloc(repo)..add(const CasesRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<CasesLoading>(), isA<CasesLoaded>()]));
+      bloc.add(const AvailabilityChanged(true));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<CasesLoaded>().having((s) => s.updatingAvailability, 'updatingAvailability', isTrue),
+          isA<CasesLoaded>()
+              .having((s) => s.profile.available, 'available', isTrue)
+              .having((s) => s.updatingAvailability, 'updatingAvailability', isFalse),
+        ]),
+      );
+      expect(repo.sentAvailability, isTrue);
+      await bloc.close();
+    });
+
+    test('si falla conserva el valor anterior y muestra el error', () async {
+      final repo = FakeCaseRepository()
+        ..profile = _profile(available: true)
+        ..failAvailability = true;
+      final bloc = buildBloc(repo)..add(const CasesRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<CasesLoading>(), isA<CasesLoaded>()]));
+      bloc.add(const AvailabilityChanged(false));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<CasesLoaded>().having((s) => s.updatingAvailability, 'updatingAvailability', isTrue),
+          isA<CasesLoaded>()
+              .having((s) => s.profile.available, 'available', isTrue)
+              .having((s) => s.availabilityError, 'availabilityError', 'No se pudo actualizar tu disponibilidad'),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('un Verificador suspendido no puede cambiar su disponibilidad', () async {
+      final repo = FakeCaseRepository()..profile = _profile(suspended: true);
+      final bloc = buildBloc(repo)..add(const CasesRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<CasesLoading>(), isA<CasesLoaded>()]));
+      bloc.add(const AvailabilityChanged(true));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(repo.sentAvailability, isNull);
       await bloc.close();
     });
   });

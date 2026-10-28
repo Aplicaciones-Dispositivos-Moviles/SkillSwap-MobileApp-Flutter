@@ -12,4 +12,7 @@ abstract class VerificationCaseRepository {
 
   // decision: Approved | Rejected. 409 si el caso ya fue resuelto.
   Future<VerificationCase> resolveCase(int caseId, {required String decision, required String rubricNotes});
+
+  // Activa o pausa la recepción de casos nuevos (T72); devuelve el perfil actualizado.
+  Future<VerifierProfile> updateAvailability(bool available);
 }
