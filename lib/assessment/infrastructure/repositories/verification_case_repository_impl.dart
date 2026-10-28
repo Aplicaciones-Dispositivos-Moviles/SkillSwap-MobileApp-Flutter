@@ -58,4 +58,14 @@ class VerificationCaseRepositoryImpl implements VerificationCaseRepository {
       throw ApiException.from(e, 'No se pudo registrar tu decisión');
     }
   }
+
+  @override
+  Future<VerifierProfile> updateAvailability(bool available) async {
+    try {
+      final response = await dio.patch('/api/v1/verifier-profiles/me/availability', data: {'available': available});
+      return VerifierProfile.fromJson(response.data as Map<String, dynamic>);
+    } catch (e) {
+      throw ApiException.from(e, 'No se pudo actualizar tu disponibilidad');
+    }
+  }
 }
