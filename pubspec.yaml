@@ -1,0 +1,40 @@
+name: skillswap_verifier
+description: "SkillSwap - app del Verificador (Flutter)"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Arquitectura: BLoC + Dio + get_it, organizada por bounded context
+  bloc: ^9.0.0
+  flutter_bloc: ^9.1.1
+  dio: ^5.8.0
+  get_it: ^8.0.3
+  flutter_secure_storage: ^9.2.4
+  share_plus: ^11.0.0
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/inter_regular.ttf
+        - asset: assets/fonts/inter_medium.ttf
+          weight: 500
+        - asset: assets/fonts/inter_semibold.ttf
+          weight: 600
+        - asset: assets/fonts/inter_bold.ttf
+          weight: 700
+        - asset: assets/fonts/inter_extrabold.ttf
+          weight: 800
