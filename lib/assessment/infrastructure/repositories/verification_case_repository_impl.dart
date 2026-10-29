@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import '../../../shared/infrastructure/network/api_exception.dart';
+import '../../domain/models/reevaluation_candidate.dart';
 import '../../domain/models/verification_case.dart';
 import '../../domain/models/verifier_profile.dart';
 import '../../domain/repositories/verification_case_repository.dart';
@@ -89,6 +90,32 @@ class VerificationCaseRepositoryImpl implements VerificationCaseRepository {
       return VerifierProfile.fromJson(response.data as Map<String, dynamic>);
     } catch (e) {
       throw ApiException.from(e, 'No se pudo reactivar al Verificador');
+    }
+  }
+
+  @override
+  Future<List<ReevaluationCandidate>> getReevaluationCandidates({int limit = 50}) async {
+    try {
+      final response = await dio.get('/api/v1/reevaluations/candidates', queryParameters: {'limit': limit});
+      return [for (final c in (response.data as List)) ReevaluationCandidate.fromJson(c as Map<String, dynamic>)];
+    } catch (e) {
+      throw ApiException.from(e, 'No se pudieron cargar los resultados');
+    }
+  }
+
+  @override
+  Future<void> orderReevaluation({
+    required String sourceType,
+    required int sourceId,
+    required String justification,
+  }) async {
+    try {
+      await dio.post(
+        '/api/v1/reevaluations',
+        data: {'sourceType': sourceType, 'sourceId': sourceId, 'justification': justification},
+      );
+    } catch (e) {
+      throw ApiException.from(e, 'No se pudo ordenar la reevaluación');
     }
   }
 }
