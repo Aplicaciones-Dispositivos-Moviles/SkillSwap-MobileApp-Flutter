@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:skillswap_verifier/assessment/application/bloc/case_review_bloc.dart';
 import 'package:skillswap_verifier/assessment/application/bloc/cases_bloc.dart';
+import 'package:skillswap_verifier/assessment/application/bloc/reevaluation_bloc.dart';
+import 'package:skillswap_verifier/assessment/domain/models/reevaluation_candidate.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verification_case.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verifier_profile.dart';
 import 'package:skillswap_verifier/assessment/domain/repositories/verification_case_repository.dart';
@@ -50,6 +52,12 @@ class FakeCaseRepository implements VerificationCaseRepository {
   String? sentJustification;
   int? reinstatedId;
   bool failSuspension = false;
+  List<ReevaluationCandidate> candidates = const [];
+  bool forbidCandidates = false;
+  bool failOrder = false;
+  String? orderedType;
+  int? orderedId;
+  String? orderedJustification;
   String? sentDecision;
   String? sentNotes;
   bool alreadyResolved = false;
@@ -92,6 +100,24 @@ class FakeCaseRepository implements VerificationCaseRepository {
   Future<VerifierProfile> reinstateVerifier(int verifierUserId) async {
     reinstatedId = verifierUserId;
     return _profile();
+  }
+
+  @override
+  Future<List<ReevaluationCandidate>> getReevaluationCandidates({int limit = 50}) async {
+    if (forbidCandidates) throw const ApiException('No es Verificador senior', status: 403);
+    return candidates;
+  }
+
+  @override
+  Future<void> orderReevaluation({
+    required String sourceType,
+    required int sourceId,
+    required String justification,
+  }) async {
+    if (failOrder) throw const ApiException('El resultado ya fue reevaluado', status: 409);
+    orderedType = sourceType;
+    orderedId = sourceId;
+    orderedJustification = justification;
   }
 }
 
@@ -140,6 +166,12 @@ class FakeReputationRepository implements ReputationRepository {
 VerifierMetric _metric(int id, int score, {bool suspended = false}) => VerifierMetric.fromJson({
       'verifierUserId': id, 'fullName': 'Verificador $id', 'score': score, 'rank': 'Bronze',
       'resolvedCasesCount': 10, 'missedDeadlinesCount': 2, 'seniorVerifier': false, 'suspended': suspended,
+    });
+
+ReevaluationCandidate _candidate(int id, {String type = 'Case', String? caseType = 'Quiz'}) =>
+    ReevaluationCandidate.fromJson({
+      'sourceType': type, 'sourceId': id, 'skillTag': 'python-data-science', 'caseType': caseType,
+      'resolvedAt': '2026-10-20T15:00:00Z', 'approvedByName': type == 'Case' ? 'Ana Ríos' : null,
     });
 
 void main() {
@@ -378,6 +410,92 @@ void main() {
       );
       expect(repo.reinstatedId, 3);
       await bloc.close();
+    });
+  });
+
+  group('ReevaluationBloc', () {
+    Future<(ReevaluationBloc, FakeCaseRepository)> loadedBloc({FakeCaseRepository? repo}) async {
+      final fake = repo ?? (FakeCaseRepository()..candidates = [_candidate(1), _candidate(2, type: 'Attempt', caseType: null)]);
+      final bloc = ReevaluationBloc(caseRepository: fake)..add(const ReevaluationsRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<ReevaluationLoading>(), isA<ReevaluationLoaded>()]));
+      return (bloc, fake);
+    }
+
+    test('carga los resultados que se pueden reevaluar', () async {
+      final repo = FakeCaseRepository()..candidates = [_candidate(1), _candidate(2, type: 'Attempt', caseType: null)];
+      final bloc = ReevaluationBloc(caseRepository: repo)..add(const ReevaluationsRequested());
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReevaluationLoading>(),
+          isA<ReevaluationLoaded>().having((s) => s.candidates.length, 'candidates', 2),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('quien no es senior recibe 403', () async {
+      final repo = FakeCaseRepository()..forbidCandidates = true;
+      final bloc = ReevaluationBloc(caseRepository: repo)..add(const ReevaluationsRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<ReevaluationLoading>(), isA<ReevaluationForbidden>()]));
+      await bloc.close();
+    });
+
+    test('ordena la reevaluación con la justificación y quita el resultado de la lista', () async {
+      final (bloc, repo) = await loadedBloc();
+      bloc.add(ReevaluationOrdered(_candidate(1), '  La rúbrica no respalda la nota  '));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReevaluationLoaded>().having((s) => s.busyKey, 'busyKey', 'Case-1'),
+          isA<ReevaluationLoaded>()
+              .having((s) => s.notice, 'notice', 'Reevaluación ordenada')
+              .having((s) => [for (final c in s.candidates) c.key], 'keys', ['Attempt-2'])
+              .having((s) => s.busyKey, 'busyKey', isNull),
+        ]),
+      );
+      expect(repo.orderedType, 'Case');
+      expect(repo.orderedId, 1);
+      expect(repo.orderedJustification, 'La rúbrica no respalda la nota');
+      await bloc.close();
+    });
+
+    test('exige la justificación y no llama al backend si está vacía', () async {
+      final (bloc, repo) = await loadedBloc();
+      bloc.add(ReevaluationOrdered(_candidate(1), '   '));
+      await expectLater(
+        bloc.stream,
+        emits(isA<ReevaluationLoaded>().having((s) => s.error, 'error', 'Escribe la justificación de la reevaluación')),
+      );
+      expect(repo.orderedId, isNull);
+      await bloc.close();
+    });
+
+    test('si el resultado ya cambió (409) muestra el error y refresca la lista sin cargar', () async {
+      final repo = FakeCaseRepository()
+        ..candidates = [_candidate(1), _candidate(3)]
+        ..failOrder = true;
+      final (bloc, _) = await loadedBloc(repo: repo);
+      repo.candidates = [_candidate(3)]; // el backend ya no lista el resultado 1
+      bloc.add(ReevaluationOrdered(_candidate(1), 'Dudo de la nota'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReevaluationLoaded>().having((s) => s.busyKey, 'busyKey', 'Case-1'),
+          isA<ReevaluationLoaded>().having((s) => s.error, 'error', 'El resultado ya fue reevaluado'),
+          isA<ReevaluationLoaded>().having((s) => [for (final c in s.candidates) c.key], 'keys', ['Case-3']),
+        ]),
+      );
+      await bloc.close();
+    });
+  });
+
+  group('ReevaluationCandidate', () {
+    test('nombra el tipo de resultado y arma la clave', () {
+      expect(_candidate(5, type: 'Attempt', caseType: null).kindLabel, 'Quiz aprobado');
+      expect(_candidate(5).kindLabel, 'Quiz aprobado con revisión');
+      expect(_candidate(5, caseType: 'MiniProject').kindLabel, 'Mini proyecto aprobado');
+      expect(_candidate(5, type: 'Attempt', caseType: null).key, 'Attempt-5');
     });
   });
 }
