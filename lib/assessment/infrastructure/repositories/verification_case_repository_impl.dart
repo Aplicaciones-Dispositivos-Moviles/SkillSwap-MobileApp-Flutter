@@ -68,4 +68,27 @@ class VerificationCaseRepositoryImpl implements VerificationCaseRepository {
       throw ApiException.from(e, 'No se pudo actualizar tu disponibilidad');
     }
   }
+
+  @override
+  Future<VerifierProfile> suspendVerifier(int verifierUserId, String justification) async {
+    try {
+      final response = await dio.post(
+        '/api/v1/verifier-profiles/$verifierUserId/suspension',
+        data: {'justification': justification},
+      );
+      return VerifierProfile.fromJson(response.data as Map<String, dynamic>);
+    } catch (e) {
+      throw ApiException.from(e, 'No se pudo suspender al Verificador');
+    }
+  }
+
+  @override
+  Future<VerifierProfile> reinstateVerifier(int verifierUserId) async {
+    try {
+      final response = await dio.delete('/api/v1/verifier-profiles/$verifierUserId/suspension');
+      return VerifierProfile.fromJson(response.data as Map<String, dynamic>);
+    } catch (e) {
+      throw ApiException.from(e, 'No se pudo reactivar al Verificador');
+    }
+  }
 }

@@ -15,4 +15,10 @@ abstract class VerificationCaseRepository {
 
   // Activa o pausa la recepción de casos nuevos (T72); devuelve el perfil actualizado.
   Future<VerifierProfile> updateAvailability(bool available);
+
+  // T62 · Verificador senior: suspende a otro Verificador con confiabilidad menor a 60 (409 si no aplica).
+  Future<VerifierProfile> suspendVerifier(int verifierUserId, String justification);
+
+  // T62 · Reactiva a un Verificador suspendido (409 si no está suspendido).
+  Future<VerifierProfile> reinstateVerifier(int verifierUserId);
 }

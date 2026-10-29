@@ -8,5 +8,6 @@ abstract class ReputationRepository {
   // Las tres consultas de métricas responden 403 si quien pregunta no es Verificador senior.
   Future<DemandMetrics> getDemand(DateTime from, DateTime to);
   Future<DifficultyMetrics> getDifficulty(DateTime from, DateTime to);
-  Future<List<VerifierMetric>> getVerifiers();
+  // order: asc (menor confiabilidad primero) o desc (por defecto).
+  Future<List<VerifierMetric>> getVerifiers({String order = 'desc'});
 }
