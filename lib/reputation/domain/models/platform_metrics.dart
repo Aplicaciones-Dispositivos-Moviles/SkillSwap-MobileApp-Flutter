@@ -130,6 +130,24 @@ class VerifierMetric {
 
   String get displayName => (fullName == null || fullName!.isEmpty) ? 'Verificador #$verifierUserId' : fullName!;
 
+  // Solo se suspende a quien tiene confiabilidad menor a 60 (el backend responde 409 si no); máximo 2000 caracteres.
+  static const suspensionThreshold = 60;
+  static const justificationMaxLength = 2000;
+
+  bool get canBeSuspended => !suspended && score < suspensionThreshold;
+
+  VerifierMetric copyWith({bool? suspended}) => VerifierMetric(
+        verifierUserId: verifierUserId,
+        fullName: fullName,
+        score: score,
+        rank: rank,
+        resolvedCasesCount: resolvedCasesCount,
+        missedDeadlinesCount: missedDeadlinesCount,
+        seniorVerifier: seniorVerifier,
+        suspended: suspended ?? this.suspended,
+        averageResolutionHours: averageResolutionHours,
+      );
+
   // Porcentaje de casos resueltos dentro del plazo; null si todavía no resolvió ninguno
   int? get onTimePercent {
     if (resolvedCasesCount == 0) return null;
