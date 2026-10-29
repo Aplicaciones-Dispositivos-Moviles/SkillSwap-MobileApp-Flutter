@@ -11,6 +11,7 @@ import 'package:skillswap_verifier/recognition/domain/models/shareable_credentia
 import 'package:skillswap_verifier/recognition/domain/models/wallet.dart';
 import 'package:skillswap_verifier/recognition/domain/repositories/recognition_repository.dart';
 import 'package:skillswap_verifier/reputation/application/bloc/metrics_bloc.dart';
+import 'package:skillswap_verifier/reputation/application/bloc/supervision_bloc.dart';
 import 'package:skillswap_verifier/reputation/domain/models/platform_metrics.dart';
 import 'package:skillswap_verifier/reputation/domain/models/verifier_reliability.dart';
 import 'package:skillswap_verifier/reputation/domain/repositories/reputation_repository.dart';
@@ -45,6 +46,10 @@ class FakeCaseRepository implements VerificationCaseRepository {
   VerifierProfile? profile;
   bool failAvailability = false;
   bool? sentAvailability;
+  int? sentSuspendedId;
+  String? sentJustification;
+  int? reinstatedId;
+  bool failSuspension = false;
   String? sentDecision;
   String? sentNotes;
   bool alreadyResolved = false;
@@ -72,6 +77,22 @@ class FakeCaseRepository implements VerificationCaseRepository {
     sentAvailability = available;
     return _profile(available: available);
   }
+
+  @override
+  Future<VerifierProfile> suspendVerifier(int verifierUserId, String justification) async {
+    if (failSuspension) {
+      throw const ApiException('Solo se suspende a quien tiene confiabilidad menor a 60', status: 409);
+    }
+    sentSuspendedId = verifierUserId;
+    sentJustification = justification;
+    return _profile(suspended: true);
+  }
+
+  @override
+  Future<VerifierProfile> reinstateVerifier(int verifierUserId) async {
+    reinstatedId = verifierUserId;
+    return _profile();
+  }
 }
 
 class FakeRecognitionRepository implements RecognitionRepository {
@@ -91,8 +112,10 @@ class FakeRecognitionRepository implements RecognitionRepository {
 
 class FakeReputationRepository implements ReputationRepository {
   final bool senior;
+  final List<VerifierMetric> verifiers;
+  String? lastVerifiersOrder;
 
-  FakeReputationRepository({required this.senior});
+  FakeReputationRepository({required this.senior, this.verifiers = const []});
 
   ApiException get _forbidden => const ApiException('No es Verificador senior', status: 403);
 
@@ -105,11 +128,19 @@ class FakeReputationRepository implements ReputationRepository {
       senior ? const DifficultyMetrics([], []) : throw _forbidden;
 
   @override
-  Future<List<VerifierMetric>> getVerifiers() async => senior ? const [] : throw _forbidden;
+  Future<List<VerifierMetric>> getVerifiers({String order = 'desc'}) async {
+    lastVerifiersOrder = order;
+    return senior ? verifiers : throw _forbidden;
+  }
 
   @override
   Future<VerifierReliability?> getReliability(int verifierUserId) async => null;
 }
+
+VerifierMetric _metric(int id, int score, {bool suspended = false}) => VerifierMetric.fromJson({
+      'verifierUserId': id, 'fullName': 'Verificador $id', 'score': score, 'rank': 'Bronze',
+      'resolvedCasesCount': 10, 'missedDeadlinesCount': 2, 'seniorVerifier': false, 'suspended': suspended,
+    });
 
 void main() {
   group('SessionBloc', () {
@@ -240,6 +271,112 @@ void main() {
       bloc.add(const AvailabilityChanged(true));
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(repo.sentAvailability, isNull);
+      await bloc.close();
+    });
+  });
+
+  group('SupervisionBloc', () {
+    SupervisionBloc buildBloc(FakeCaseRepository repo, {bool senior = true, FakeReputationRepository? reputation}) =>
+        SupervisionBloc(
+          userId: 1,
+          reputationRepository: reputation ??
+              FakeReputationRepository(
+                senior: senior,
+                verifiers: [_metric(1, 95), _metric(2, 40), _metric(3, 80, suspended: true)],
+              ),
+          caseRepository: repo,
+        );
+
+    Future<SupervisionBloc> loadedBloc(FakeCaseRepository repo) async {
+      final bloc = buildBloc(repo)..add(const SupervisionRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<SupervisionLoading>(), isA<SupervisionLoaded>()]));
+      return bloc;
+    }
+
+    test('lista a los demás Verificadores de menor a mayor confiabilidad', () async {
+      final reputation = FakeReputationRepository(
+        senior: true,
+        verifiers: [_metric(1, 95), _metric(2, 40), _metric(3, 80)],
+      );
+      final bloc = buildBloc(FakeCaseRepository(), reputation: reputation)..add(const SupervisionRequested());
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoading>(),
+          isA<SupervisionLoaded>().having((s) => [for (final v in s.verifiers) v.verifierUserId], 'ids', [2, 3]),
+        ]),
+      );
+      expect(reputation.lastVerifiersOrder, 'asc');
+      await bloc.close();
+    });
+
+    test('un Verificador sin rango senior recibe 403', () async {
+      final bloc = buildBloc(FakeCaseRepository(), senior: false)..add(const SupervisionRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<SupervisionLoading>(), isA<SupervisionForbidden>()]));
+      await bloc.close();
+    });
+
+    test('suspende con la justificación y marca al Verificador como suspendido', () async {
+      final repo = FakeCaseRepository();
+      final bloc = await loadedBloc(repo);
+      bloc.add(const VerifierSuspended(2, '  Faltó a tres plazos  '));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoaded>().having((s) => s.busyUserId, 'busyUserId', 2),
+          isA<SupervisionLoaded>()
+              .having((s) => s.notice, 'notice', 'Verificador suspendido')
+              .having((s) => s.verifiers.first.suspended, 'suspended', isTrue)
+              .having((s) => s.busyUserId, 'busyUserId', isNull),
+        ]),
+      );
+      expect(repo.sentSuspendedId, 2);
+      expect(repo.sentJustification, 'Faltó a tres plazos');
+      await bloc.close();
+    });
+
+    test('exige la justificación y no llama al backend si está vacía', () async {
+      final repo = FakeCaseRepository();
+      final bloc = await loadedBloc(repo);
+      bloc.add(const VerifierSuspended(2, '   '));
+      await expectLater(
+        bloc.stream,
+        emits(isA<SupervisionLoaded>().having((s) => s.error, 'error', 'Escribe la justificación de la suspensión')),
+      );
+      expect(repo.sentSuspendedId, isNull);
+      await bloc.close();
+    });
+
+    test('si el backend rechaza la suspensión muestra el error y no cambia al Verificador', () async {
+      final repo = FakeCaseRepository()..failSuspension = true;
+      final bloc = await loadedBloc(repo);
+      bloc.add(const VerifierSuspended(2, 'Faltó a tres plazos'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoaded>().having((s) => s.busyUserId, 'busyUserId', 2),
+          isA<SupervisionLoaded>()
+              .having((s) => s.error, 'error', 'Solo se suspende a quien tiene confiabilidad menor a 60')
+              .having((s) => s.verifiers.first.suspended, 'suspended', isFalse),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('reactiva a un Verificador suspendido', () async {
+      final repo = FakeCaseRepository();
+      final bloc = await loadedBloc(repo);
+      bloc.add(const VerifierReinstated(3));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoaded>().having((s) => s.busyUserId, 'busyUserId', 3),
+          isA<SupervisionLoaded>()
+              .having((s) => s.notice, 'notice', 'Verificador reactivado')
+              .having((s) => s.verifiers.last.suspended, 'suspended', isFalse),
+        ]),
+      );
+      expect(repo.reinstatedId, 3);
       await bloc.close();
     });
   });
