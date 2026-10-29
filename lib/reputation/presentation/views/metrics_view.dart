@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../assessment/application/bloc/reevaluation_bloc.dart';
+import '../../../assessment/presentation/views/reevaluation_view.dart';
 import '../../../service_locator.dart';
 import '../../../shared/presentation/components/message_view.dart';
 import '../../../shared/presentation/design/app_colors.dart';
@@ -65,6 +67,18 @@ class _MetricsContent extends StatelessWidget {
     );
   }
 
+  // T60 · Reevaluación de resultados aprobados
+  void _openReevaluation(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider(
+          create: (_) => getIt<ReevaluationBloc>()..add(const ReevaluationsRequested()),
+          child: const ReevaluationView(),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
@@ -116,6 +130,12 @@ class _MetricsContent extends StatelessWidget {
           onPressed: () => _openSupervision(context),
           icon: const Icon(Icons.admin_panel_settings_outlined),
           label: const Text('Supervisar Verificadores'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => _openReevaluation(context),
+          icon: const Icon(Icons.fact_check_outlined),
+          label: const Text('Reevaluar resultados'),
         ),
       ],
     );
