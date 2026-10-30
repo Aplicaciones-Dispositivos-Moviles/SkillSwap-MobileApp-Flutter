@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:skillswap_verifier/assessment/domain/models/rubric.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verification_case.dart';
+import 'package:skillswap_verifier/recognition/domain/models/redeemable_benefit.dart';
 import 'package:skillswap_verifier/recognition/domain/models/shareable_credential.dart';
+import 'package:skillswap_verifier/recognition/domain/models/wallet.dart';
 import 'package:skillswap_verifier/reputation/domain/models/platform_metrics.dart';
 import 'package:skillswap_verifier/shared/domain/utils/formatters.dart';
 import 'package:skillswap_verifier/shared/infrastructure/network/api_exception.dart';
@@ -136,5 +138,31 @@ void main() {
     expect(ApiException.fromResponse(409, {'title': 'AlreadyResolved', 'detail': 'El caso ya fue resuelto'}, 'x').message,
         'El caso ya fue resuelto');
     expect(ApiException.fromResponse(500, 'error', 'No se pudo').message, 'No se pudo');
+  });
+
+  group('Tienda de beneficios', () {
+    test('el catálogo fijo coincide con los valores y costos del backend', () {
+      expect(
+        [for (final b in RedeemableBenefit.values) (b.apiValue, b.cost)],
+        [('Badge', 200), ('ContributionCertificate', 300), ('AdvancedPathUnlock', 500), ('SponsoredCertification', 1500)],
+      );
+    });
+
+    test('solo la insignia se canjea una vez', () {
+      expect([for (final b in RedeemableBenefit.values) if (b.oncePerUser) b], [RedeemableBenefit.badge]);
+    });
+
+    test('reconoce un canje previo por el redemptionItem del movimiento', () {
+      final canje = CreditTransaction.fromJson({
+        'id': 1, 'amount': -200, 'type': 'Redeemed', 'description': null, 'relatedCaseId': null,
+        'createdAt': '2026-10-20T15:00:00Z', 'redemptionItem': 'Badge',
+      });
+      final ganado = CreditTransaction.fromJson({
+        'id': 2, 'amount': 40, 'type': 'Earned', 'relatedCaseId': 2041, 'createdAt': '2026-10-20T15:00:00Z',
+      });
+      expect(ganado.redemptionItem, isNull);
+      expect([ganado, canje].hasRedeemed(RedeemableBenefit.badge), isTrue);
+      expect([ganado].hasRedeemed(RedeemableBenefit.badge), isFalse);
+    });
   });
 }

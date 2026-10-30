@@ -9,6 +9,8 @@ import 'package:skillswap_verifier/assessment/domain/repositories/verification_c
 import 'package:skillswap_verifier/iam/application/bloc/session_bloc.dart';
 import 'package:skillswap_verifier/iam/domain/models/auth_user.dart';
 import 'package:skillswap_verifier/iam/domain/repositories/auth_repository.dart';
+import 'package:skillswap_verifier/recognition/application/bloc/store_bloc.dart';
+import 'package:skillswap_verifier/recognition/domain/models/redeemable_benefit.dart';
 import 'package:skillswap_verifier/recognition/domain/models/shareable_credential.dart';
 import 'package:skillswap_verifier/recognition/domain/models/wallet.dart';
 import 'package:skillswap_verifier/recognition/domain/repositories/recognition_repository.dart';
@@ -17,6 +19,7 @@ import 'package:skillswap_verifier/reputation/application/bloc/supervision_bloc.
 import 'package:skillswap_verifier/reputation/domain/models/platform_metrics.dart';
 import 'package:skillswap_verifier/reputation/domain/models/verifier_reliability.dart';
 import 'package:skillswap_verifier/reputation/domain/repositories/reputation_repository.dart';
+import 'package:skillswap_verifier/shared/domain/services/device_authenticator.dart';
 import 'package:skillswap_verifier/shared/infrastructure/network/api_exception.dart';
 
 // ---------- repositorios falsos ----------
@@ -121,7 +124,25 @@ class FakeCaseRepository implements VerificationCaseRepository {
   }
 }
 
+class FakeDeviceAuthenticator implements DeviceAuthenticator {
+  final DeviceAuthResult result;
+  final bool throws;
+  int calls = 0;
+
+  FakeDeviceAuthenticator(this.result, {this.throws = false});
+
+  @override
+  Future<DeviceAuthResult> confirm(String reason) async {
+    calls++;
+    if (throws) throw StateError('falla del sensor');
+    return result;
+  }
+}
+
 class FakeRecognitionRepository implements RecognitionRepository {
+  String? redeemedItem;
+  bool failRedeem = false;
+
   @override
   Future<Wallet?> getWallet(int userId) async => null;
 
@@ -134,6 +155,21 @@ class FakeRecognitionRepository implements RecognitionRepository {
   @override
   Future<ShareableCredential> createShareableCredential(String skillTag) async =>
       throw UnimplementedError('No se usa en estas pruebas');
+
+  @override
+  Future<CreditTransaction> redeem(String item) async {
+    if (failRedeem) throw const ApiException('Tu saldo no alcanza para este beneficio', status: 409);
+    redeemedItem = item;
+    return CreditTransaction(
+      id: 90,
+      amount: -500,
+      type: 'Redeemed',
+      description: null,
+      relatedCaseId: null,
+      createdAt: null,
+      redemptionItem: item,
+    );
+  }
 }
 
 class FakeReputationRepository implements ReputationRepository {
@@ -496,6 +532,95 @@ void main() {
       expect(_candidate(5).kindLabel, 'Quiz aprobado con revisión');
       expect(_candidate(5, caseType: 'MiniProject').kindLabel, 'Mini proyecto aprobado');
       expect(_candidate(5, type: 'Attempt', caseType: null).key, 'Attempt-5');
+    });
+  });
+
+  group('StoreBloc', () {
+    StoreBloc buildBloc(FakeRecognitionRepository repo, FakeDeviceAuthenticator auth) =>
+        StoreBloc(recognitionRepository: repo, deviceAuthenticator: auth);
+
+    test('canjea el beneficio después de confirmar con el dispositivo', () async {
+      final repo = FakeRecognitionRepository();
+      final auth = FakeDeviceAuthenticator(DeviceAuthResult.confirmed);
+      final bloc = buildBloc(repo, auth)..add(const RedeemRequested(RedeemableBenefit.advancedPathUnlock));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<StoreRedeeming>().having((s) => s.benefit, 'benefit', RedeemableBenefit.advancedPathUnlock),
+          isA<StoreRedeemed>()
+              .having((s) => s.benefit, 'benefit', RedeemableBenefit.advancedPathUnlock)
+              .having((s) => s.transaction.redemptionItem, 'redemptionItem', 'AdvancedPathUnlock'),
+        ]),
+      );
+      expect(auth.calls, 1);
+      expect(repo.redeemedItem, 'AdvancedPathUnlock');
+      await bloc.close();
+    });
+
+    test('si no confirma su identidad no llama al backend', () async {
+      final repo = FakeRecognitionRepository();
+      final auth = FakeDeviceAuthenticator(DeviceAuthResult.cancelled);
+      final bloc = buildBloc(repo, auth)..add(const RedeemRequested(RedeemableBenefit.badge));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<StoreRedeeming>(),
+          isA<StoreFailed>()
+              .having((s) => s.message, 'message', 'No se confirmó tu identidad, así que no se hizo el canje.'),
+        ]),
+      );
+      expect(repo.redeemedItem, isNull);
+      await bloc.close();
+    });
+
+    test('sin bloqueo de pantalla en el dispositivo no se puede canjear', () async {
+      final repo = FakeRecognitionRepository();
+      final auth = FakeDeviceAuthenticator(DeviceAuthResult.unavailable);
+      final bloc = buildBloc(repo, auth)..add(const RedeemRequested(RedeemableBenefit.badge));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<StoreRedeeming>(),
+          isA<StoreFailed>().having(
+            (s) => s.message,
+            'message',
+            'Configura un bloqueo de pantalla (huella, PIN o patrón) en tu dispositivo para canjear.',
+          ),
+        ]),
+      );
+      expect(repo.redeemedItem, isNull);
+      await bloc.close();
+    });
+
+    test('si el sensor falla de forma inesperada avisa y no canjea', () async {
+      final repo = FakeRecognitionRepository();
+      final auth = FakeDeviceAuthenticator(DeviceAuthResult.confirmed, throws: true);
+      final bloc = buildBloc(repo, auth)..add(const RedeemRequested(RedeemableBenefit.badge));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<StoreRedeeming>(),
+          isA<StoreFailed>()
+              .having((s) => s.message, 'message', 'No se pudo confirmar tu identidad. Inténtalo de nuevo.'),
+        ]),
+      );
+      expect(repo.redeemedItem, isNull);
+      await bloc.close();
+    });
+
+    test('si el backend rechaza el canje (409) muestra su mensaje', () async {
+      final repo = FakeRecognitionRepository()..failRedeem = true;
+      final auth = FakeDeviceAuthenticator(DeviceAuthResult.confirmed);
+      final bloc = buildBloc(repo, auth)..add(const RedeemRequested(RedeemableBenefit.sponsoredCertification));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<StoreRedeeming>(),
+          isA<StoreFailed>().having((s) => s.message, 'message', 'Tu saldo no alcanza para este beneficio'),
+        ]),
+      );
+      expect(auth.calls, 1);
+      await bloc.close();
     });
   });
 }
