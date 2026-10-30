@@ -19,6 +19,7 @@ class CreditTransaction {
   final String? description;
   final int? relatedCaseId;
   final DateTime? createdAt;
+  final String? redemptionItem; // beneficio canjeado (solo en los canjes)
 
   const CreditTransaction({
     required this.id,
@@ -27,6 +28,7 @@ class CreditTransaction {
     required this.description,
     required this.relatedCaseId,
     required this.createdAt,
+    this.redemptionItem,
   });
 
   factory CreditTransaction.fromJson(Map<String, dynamic> json) => CreditTransaction(
@@ -36,6 +38,7 @@ class CreditTransaction {
         description: json['description'] as String?,
         relatedCaseId: (json['relatedCaseId'] as num?)?.toInt(),
         createdAt: parseDate(json['createdAt']),
+        redemptionItem: json['redemptionItem'] as String?,
       );
 
   String get title {
