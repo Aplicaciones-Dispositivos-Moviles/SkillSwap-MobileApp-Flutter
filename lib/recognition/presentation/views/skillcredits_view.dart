@@ -6,9 +6,11 @@ import '../../../shared/domain/utils/formatters.dart';
 import '../../../shared/presentation/components/message_view.dart';
 import '../../../shared/presentation/design/app_colors.dart';
 import '../../application/bloc/share_bloc.dart';
+import '../../application/bloc/store_bloc.dart';
 import '../../application/bloc/wallet_bloc.dart';
 import '../../domain/models/wallet.dart';
 import 'share_achievement_view.dart';
+import 'store_view.dart';
 
 // Mock-up 25 "SkillCredits" (WF-24 #01): saldo, movimientos y acceso a compartir el logro (T58).
 class SkillCreditsView extends StatelessWidget {
@@ -21,6 +23,21 @@ class SkillCreditsView extends StatelessWidget {
         builder: (_) => BlocProvider(
           create: (_) => getIt<ShareBloc>()..add(const ShareRequested()),
           child: const ShareAchievementView(),
+        ),
+      ),
+    );
+  }
+
+  // US32 · Tienda de beneficios: comparte el WalletBloc para ver y refrescar el saldo
+  void _openStore(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MultiBlocProvider(
+          providers: [
+            BlocProvider.value(value: context.read<WalletBloc>()),
+            BlocProvider(create: (_) => getIt<StoreBloc>()),
+          ],
+          child: const StoreView(),
         ),
       ),
     );
@@ -48,7 +65,7 @@ class SkillCreditsView extends StatelessWidget {
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
                   children: [
-                    _BalanceCard(balance: balance, onShare: () => _share(context)),
+                    _BalanceCard(balance: balance, onShare: () => _share(context), onStore: () => _openStore(context)),
                     const SizedBox(height: 24),
                     Text('Movimientos', style: text.titleMedium),
                     const SizedBox(height: 8),
@@ -74,8 +91,9 @@ class SkillCreditsView extends StatelessWidget {
 class _BalanceCard extends StatelessWidget {
   final int balance;
   final VoidCallback onShare;
+  final VoidCallback onStore;
 
-  const _BalanceCard({required this.balance, required this.onShare});
+  const _BalanceCard({required this.balance, required this.onShare, required this.onStore});
 
   @override
   Widget build(BuildContext context) {
@@ -109,6 +127,17 @@ class _BalanceCard extends StatelessWidget {
             onPressed: onShare,
             icon: const Icon(Icons.ios_share, size: 18),
             label: const Text('Compartir logro'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: const BorderSide(color: Colors.white70),
+              minimumSize: const Size.fromHeight(44),
+            ),
+            onPressed: onStore,
+            icon: const Icon(Icons.storefront_outlined, size: 18),
+            label: const Text('Tienda de beneficios'),
           ),
         ],
       ),

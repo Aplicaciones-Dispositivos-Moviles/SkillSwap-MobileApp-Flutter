@@ -54,4 +54,14 @@ class RecognitionRepositoryImpl implements RecognitionRepository {
       throw ApiException.from(e, 'No se pudo generar el enlace público');
     }
   }
+
+  @override
+  Future<CreditTransaction> redeem(String item) async {
+    try {
+      final response = await dio.post('/api/v1/credit-transactions/redeem', data: {'item': item});
+      return CreditTransaction.fromJson(response.data as Map<String, dynamic>);
+    } catch (e) {
+      throw ApiException.from(e, 'No se pudo canjear el beneficio');
+    }
+  }
 }

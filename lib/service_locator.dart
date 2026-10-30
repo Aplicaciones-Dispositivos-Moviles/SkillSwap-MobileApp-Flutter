@@ -10,6 +10,7 @@ import 'iam/application/bloc/session_bloc.dart';
 import 'iam/domain/repositories/auth_repository.dart';
 import 'iam/infrastructure/repositories/auth_repository_impl.dart';
 import 'recognition/application/bloc/share_bloc.dart';
+import 'recognition/application/bloc/store_bloc.dart';
 import 'recognition/application/bloc/wallet_bloc.dart';
 import 'recognition/domain/repositories/recognition_repository.dart';
 import 'recognition/infrastructure/repositories/recognition_repository_impl.dart';
@@ -17,10 +18,12 @@ import 'reputation/application/bloc/metrics_bloc.dart';
 import 'reputation/application/bloc/supervision_bloc.dart';
 import 'reputation/domain/repositories/reputation_repository.dart';
 import 'reputation/infrastructure/repositories/reputation_repository_impl.dart';
+import 'shared/domain/services/device_authenticator.dart';
 import 'shared/domain/services/storage_service.dart';
 import 'shared/infrastructure/network/api_config.dart';
 import 'shared/infrastructure/network/auth_interceptor.dart';
 import 'shared/infrastructure/network/session_token.dart';
+import 'shared/infrastructure/services/local_auth_authenticator.dart';
 import 'shared/infrastructure/services/secure_storage_service.dart';
 
 final getIt = GetIt.instance;
@@ -30,6 +33,7 @@ void setupServiceLocator() {
   // ---------- shared ----------
   getIt.registerLazySingleton<SessionToken>(() => SessionToken());
   getIt.registerLazySingleton<StorageService>(() => SecureStorageService());
+  getIt.registerLazySingleton<DeviceAuthenticator>(() => LocalAuthAuthenticator());
   getIt.registerLazySingleton<Dio>(() {
     final dio = Dio(BaseOptions(
       baseUrl: ApiConfig.baseUrl,
@@ -66,6 +70,10 @@ void setupServiceLocator() {
   getIt.registerFactory<WalletBloc>(
     () => WalletBloc(userId: _currentUserId(), recognitionRepository: getIt<RecognitionRepository>()),
   );
+  getIt.registerFactory<StoreBloc>(() => StoreBloc(
+        recognitionRepository: getIt<RecognitionRepository>(),
+        deviceAuthenticator: getIt<DeviceAuthenticator>(),
+      ));
   getIt.registerFactory<ShareBloc>(() => ShareBloc(
         userId: _currentUserId(),
         recognitionRepository: getIt<RecognitionRepository>(),

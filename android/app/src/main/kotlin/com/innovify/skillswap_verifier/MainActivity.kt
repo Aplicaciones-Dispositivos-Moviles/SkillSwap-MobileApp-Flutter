@@ -1,5 +1,6 @@
 package com.innovify.skillswap_verifier
 
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 
-class MainActivity : FlutterActivity()
+// local_auth (confirmación biométrica del canje) requiere FragmentActivity
+class MainActivity : FlutterFragmentActivity()
