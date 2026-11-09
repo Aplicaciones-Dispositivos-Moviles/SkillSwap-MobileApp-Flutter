@@ -1,7 +1,7 @@
-// Backend desplegado en Render (el mismo que usa la app nativa del Estudiante).
+// Backend desplegado en AWS (el mismo que usa la app nativa del Estudiante).
 class ApiConfig {
-  static const baseUrl = 'https://skillswap-webservices-java.onrender.com';
+  static const baseUrl = 'https://skillswap-innovify.duckdns.org';
 
-  // Render (plan gratis) puede estar dormido: la primera llamada tarda
+  // La generación y evaluación con IA del backend puede tardar varios segundos
   static const timeout = Duration(seconds: 60);
 }
