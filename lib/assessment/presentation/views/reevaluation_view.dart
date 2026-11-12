@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../shared/domain/utils/formatters.dart';
+import '../../../shared/presentation/components/justification_dialog.dart';
 import '../../../shared/presentation/components/message_view.dart';
 import '../../../shared/presentation/design/app_colors.dart';
 import '../../application/bloc/reevaluation_bloc.dart';
@@ -15,7 +16,12 @@ class ReevaluationView extends StatelessWidget {
     final bloc = context.read<ReevaluationBloc>();
     final justification = await showDialog<String>(
       context: context,
-      builder: (_) => _JustificationDialog(skill: skillLabel(candidate.skillTag)),
+      builder: (_) => JustificationDialog(
+        title: 'Reevaluar ${skillLabel(candidate.skillTag)}',
+        description: 'El Estudiante tendrá que demostrar la habilidad de nuevo. Cuéntanos por qué dudas del resultado.',
+        confirmLabel: 'Ordenar',
+        maxLength: ReevaluationCandidate.justificationMaxLength,
+      ),
     );
     if (justification != null) bloc.add(ReevaluationOrdered(candidate, justification));
   }
@@ -132,60 +138,3 @@ class _CandidateTile extends StatelessWidget {
 }
 
 // Pide la justificación obligatoria de la reevaluación (máximo 2000 caracteres).
-class _JustificationDialog extends StatefulWidget {
-  final String skill;
-
-  const _JustificationDialog({required this.skill});
-
-  @override
-  State<_JustificationDialog> createState() => _JustificationDialogState();
-}
-
-class _JustificationDialogState extends State<_JustificationDialog> {
-  final _controller = TextEditingController();
-  String? _error;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final value = _controller.text.trim();
-    if (value.isEmpty) {
-      setState(() => _error = 'Escribe la justificación');
-      return;
-    }
-    Navigator.of(context).pop(value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Reevaluar ${widget.skill}'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('El Estudiante tendrá que demostrar la habilidad de nuevo. Cuéntanos por qué dudas del resultado.'),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _controller,
-            maxLines: 4,
-            maxLength: ReevaluationCandidate.justificationMaxLength,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: InputDecoration(labelText: 'Justificación', errorText: _error),
-            onChanged: (_) {
-              if (_error != null) setState(() => _error = null);
-            },
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
-        FilledButton(onPressed: _submit, child: const Text('Ordenar')),
-      ],
-    );
-  }
-}

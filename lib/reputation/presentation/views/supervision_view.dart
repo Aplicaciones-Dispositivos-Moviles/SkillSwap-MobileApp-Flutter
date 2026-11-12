@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../shared/presentation/components/justification_dialog.dart';
 import '../../../shared/presentation/components/message_view.dart';
 import '../../../shared/presentation/components/status_chip.dart';
 import '../../../shared/presentation/design/app_colors.dart';
@@ -16,7 +17,13 @@ class SupervisionView extends StatelessWidget {
     final bloc = context.read<SupervisionBloc>();
     final justification = await showDialog<String>(
       context: context,
-      builder: (_) => _SuspendDialog(name: verifier.displayName),
+      builder: (_) => JustificationDialog(
+        title: 'Suspender a ${verifier.displayName}',
+        description: 'Dejará de recibir casos nuevos hasta que lo reactives.',
+        confirmLabel: 'Suspender',
+        maxLength: VerifierMetric.justificationMaxLength,
+        destructive: true,
+      ),
     );
     if (justification != null) bloc.add(VerifierSuspended(verifier.verifierUserId, justification));
   }
@@ -175,64 +182,3 @@ class _VerifierTile extends StatelessWidget {
 }
 
 // Pide la justificación obligatoria de la suspensión (máximo 2000 caracteres).
-class _SuspendDialog extends StatefulWidget {
-  final String name;
-
-  const _SuspendDialog({required this.name});
-
-  @override
-  State<_SuspendDialog> createState() => _SuspendDialogState();
-}
-
-class _SuspendDialogState extends State<_SuspendDialog> {
-  final _controller = TextEditingController();
-  String? _error;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final value = _controller.text.trim();
-    if (value.isEmpty) {
-      setState(() => _error = 'Escribe la justificación');
-      return;
-    }
-    Navigator.of(context).pop(value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Suspender a ${widget.name}'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Dejará de recibir casos nuevos hasta que lo reactives.'),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _controller,
-            maxLines: 4,
-            maxLength: VerifierMetric.justificationMaxLength,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: InputDecoration(labelText: 'Justificación', errorText: _error),
-            onChanged: (_) {
-              if (_error != null) setState(() => _error = null);
-            },
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
-        FilledButton(
-          onPressed: _submit,
-          style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-          child: const Text('Suspender'),
-        ),
-      ],
-    );
-  }
-}
