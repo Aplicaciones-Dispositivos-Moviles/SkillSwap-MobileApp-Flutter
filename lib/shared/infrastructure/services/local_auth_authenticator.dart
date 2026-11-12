@@ -15,7 +15,9 @@ class LocalAuthAuthenticator implements DeviceAuthenticator {
       // biometricOnly queda en false: si no hay huella registrada, el sistema ofrece PIN, patrón o contraseña
       final confirmed = await _auth.authenticate(localizedReason: reason);
       return confirmed ? DeviceAuthResult.confirmed : DeviceAuthResult.cancelled;
-    } on LocalAuthException {
+    } on LocalAuthException catch (e) {
+      // Sin bloqueo de pantalla no se puede confirmar: se pide configurarlo, no se dice que se canceló
+      if (e.code == LocalAuthExceptionCode.noCredentialsSet) return DeviceAuthResult.unavailable;
       // Cancelado, demasiados intentos fallidos u otro rechazo del sistema
       return DeviceAuthResult.cancelled;
     }
