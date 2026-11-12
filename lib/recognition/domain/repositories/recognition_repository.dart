@@ -15,5 +15,6 @@ abstract class RecognitionRepository {
 
   // US32 · Canjea un beneficio de la tienda (Badge, ContributionCertificate, AdvancedPathUnlock o SponsoredCertification).
   // El servidor no verifica la biometría: la app la pide antes de llamar. 400, 404 o 409 con el motivo.
-  Future<CreditTransaction> redeem(String item);
+  // [idempotencyKey] identifies this attempt: the backend never debits twice for the same key.
+  Future<CreditTransaction> redeem(String item, {String? idempotencyKey});
 }
