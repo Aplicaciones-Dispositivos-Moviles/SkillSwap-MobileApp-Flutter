@@ -34,15 +34,20 @@ class CasesLoaded extends CasesState {
     this.availabilityError,
   });
 
-  // Copia con otro perfil o estado de guardado; lo que no se indica vuelve a su valor inicial.
-  CasesLoaded copyWith({VerifierProfile? profile, bool updatingAvailability = false, String? availabilityError}) =>
+  // Copia que conserva lo que no se indica; [clearAvailabilityError] borra el aviso de error.
+  CasesLoaded copyWith({
+    VerifierProfile? profile,
+    bool? updatingAvailability,
+    String? availabilityError,
+    bool clearAvailabilityError = false,
+  }) =>
       CasesLoaded(
         profile: profile ?? this.profile,
         cases: cases,
         reliability: reliability,
         balance: balance,
-        updatingAvailability: updatingAvailability,
-        availabilityError: availabilityError,
+        updatingAvailability: updatingAvailability ?? this.updatingAvailability,
+        availabilityError: clearAvailabilityError ? null : availabilityError ?? this.availabilityError,
       );
 
   List<VerificationCase> get pending => cases.where((c) => !c.isResolved).toList();

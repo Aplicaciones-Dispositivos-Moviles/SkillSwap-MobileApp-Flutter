@@ -57,6 +57,7 @@ class FakeCaseRepository implements VerificationCaseRepository {
   bool failSuspension = false;
   List<ReevaluationCandidate> candidates = const [];
   bool forbidCandidates = false;
+  bool failCandidates = false;
   bool failOrder = false;
   String? orderedType;
   int? orderedId;
@@ -108,6 +109,7 @@ class FakeCaseRepository implements VerificationCaseRepository {
   @override
   Future<List<ReevaluationCandidate>> getReevaluationCandidates({int limit = 50}) async {
     if (forbidCandidates) throw const ApiException('No es Verificador senior', status: 403);
+    if (failCandidates) throw const ApiException('Sin conexión', status: 503);
     return candidates;
   }
 
@@ -174,8 +176,9 @@ class FakeRecognitionRepository implements RecognitionRepository {
 
 class FakeReputationRepository implements ReputationRepository {
   final bool senior;
-  final List<VerifierMetric> verifiers;
+  List<VerifierMetric> verifiers;
   String? lastVerifiersOrder;
+  bool failVerifiers = false;
 
   FakeReputationRepository({required this.senior, this.verifiers = const []});
 
@@ -192,6 +195,7 @@ class FakeReputationRepository implements ReputationRepository {
   @override
   Future<List<VerifierMetric>> getVerifiers({String order = 'desc'}) async {
     lastVerifiersOrder = order;
+    if (failVerifiers) throw const ApiException('Sin conexión', status: 503);
     return senior ? verifiers : throw _forbidden;
   }
 
@@ -284,6 +288,24 @@ void main() {
         ..add(const MetricsRequested());
       await expectLater(bloc.stream, emitsInOrder([isA<MetricsLoading>(), isA<MetricsForbidden>()]));
       await bloc.close();
+    });
+  });
+
+  group('CasesLoaded', () {
+    test('copyWith conserva los campos que no se indican', () {
+      final state = CasesLoaded(
+        profile: _profile(),
+        cases: [_case()],
+        balance: 120,
+        updatingAvailability: true,
+        availabilityError: 'Sin conexión',
+      );
+      final copy = state.copyWith(profile: _profile(available: true));
+      expect(copy.profile.available, isTrue);
+      expect(copy.updatingAvailability, isTrue);
+      expect(copy.availabilityError, 'Sin conexión');
+      expect(copy.balance, 120);
+      expect(state.copyWith(clearAvailabilityError: true).availabilityError, isNull);
     });
   });
 
@@ -431,6 +453,60 @@ void main() {
       await bloc.close();
     });
 
+    test('si la suspensión choca con un cambio (409) refresca la lista sin mostrar la carga', () async {
+      final reputation = FakeReputationRepository(senior: true, verifiers: [_metric(2, 40)]);
+      final repo = FakeCaseRepository()..failSuspension = true;
+      final bloc = buildBloc(repo, reputation: reputation)..add(const SupervisionRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<SupervisionLoading>(), isA<SupervisionLoaded>()]));
+      reputation.verifiers = [_metric(2, 40, suspended: true)]; // otro senior ya lo suspendió
+      bloc.add(const VerifierSuspended(2, 'Faltó a tres plazos'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoaded>().having((s) => s.busyUserId, 'busyUserId', 2),
+          isA<SupervisionLoaded>().having((s) => s.error, 'error', 'Solo se suspende a quien tiene confiabilidad menor a 60'),
+          isA<SupervisionLoaded>().having((s) => s.verifiers.single.suspended, 'suspended', isTrue),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('si la recarga tras el 409 falla conserva la lista y avisa el error', () async {
+      final reputation = FakeReputationRepository(senior: true, verifiers: [_metric(2, 40)]);
+      final repo = FakeCaseRepository()..failSuspension = true;
+      final bloc = buildBloc(repo, reputation: reputation)..add(const SupervisionRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<SupervisionLoading>(), isA<SupervisionLoaded>()]));
+      reputation.failVerifiers = true;
+      bloc.add(const VerifierSuspended(2, 'Faltó a tres plazos'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoaded>().having((s) => s.busyUserId, 'busyUserId', 2),
+          isA<SupervisionLoaded>().having((s) => s.error, 'error', 'Solo se suspende a quien tiene confiabilidad menor a 60'),
+          isA<SupervisionLoaded>()
+              .having((s) => s.error, 'error', 'Sin conexión')
+              .having((s) => s.verifiers.length, 'verifiers', 1),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('rechaza una justificación de más de 2000 caracteres sin llamar al backend', () async {
+      final repo = FakeCaseRepository();
+      final bloc = await loadedBloc(repo);
+      bloc.add(VerifierSuspended(2, 'a' * (VerifierMetric.justificationMaxLength + 1)));
+      await expectLater(
+        bloc.stream,
+        emits(isA<SupervisionLoaded>().having(
+          (s) => s.error,
+          'error',
+          'La justificación no puede pasar de ${VerifierMetric.justificationMaxLength} caracteres',
+        )),
+      );
+      expect(repo.sentSuspendedId, isNull);
+      await bloc.close();
+    });
+
     test('reactiva a un Verificador suspendido', () async {
       final repo = FakeCaseRepository();
       final bloc = await loadedBloc(repo);
@@ -522,6 +598,46 @@ void main() {
           isA<ReevaluationLoaded>().having((s) => [for (final c in s.candidates) c.key], 'keys', ['Case-3']),
         ]),
       );
+      await bloc.close();
+    });
+  });
+
+  group('ReevaluationBloc · errores', () {
+    test('si la recarga tras el 409 falla conserva la lista y avisa el error', () async {
+      final repo = FakeCaseRepository()
+        ..candidates = [_candidate(1), _candidate(3)]
+        ..failOrder = true;
+      final bloc = ReevaluationBloc(caseRepository: repo)..add(const ReevaluationsRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<ReevaluationLoading>(), isA<ReevaluationLoaded>()]));
+      repo.failCandidates = true;
+      bloc.add(ReevaluationOrdered(_candidate(1), 'Dudo de la nota'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReevaluationLoaded>().having((s) => s.busyKey, 'busyKey', 'Case-1'),
+          isA<ReevaluationLoaded>().having((s) => s.error, 'error', 'El resultado ya fue reevaluado'),
+          isA<ReevaluationLoaded>()
+              .having((s) => s.error, 'error', 'Sin conexión')
+              .having((s) => s.candidates.length, 'candidates', 2),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('rechaza una justificación de más de 2000 caracteres sin llamar al backend', () async {
+      final repo = FakeCaseRepository()..candidates = [_candidate(1)];
+      final bloc = ReevaluationBloc(caseRepository: repo)..add(const ReevaluationsRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<ReevaluationLoading>(), isA<ReevaluationLoaded>()]));
+      bloc.add(ReevaluationOrdered(_candidate(1), 'a' * (ReevaluationCandidate.justificationMaxLength + 1)));
+      await expectLater(
+        bloc.stream,
+        emits(isA<ReevaluationLoaded>().having(
+          (s) => s.error,
+          'error',
+          'La justificación no puede pasar de ${ReevaluationCandidate.justificationMaxLength} caracteres',
+        )),
+      );
+      expect(repo.orderedId, isNull);
       await bloc.close();
     });
   });

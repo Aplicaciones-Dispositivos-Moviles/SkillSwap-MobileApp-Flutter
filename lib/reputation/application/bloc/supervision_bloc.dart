@@ -22,7 +22,7 @@ class SupervisionBloc extends Bloc<SupervisionEvent, SupervisionState> {
   }
 
   Future<void> _onRequested(SupervisionRequested event, Emitter<SupervisionState> emit) async {
-    emit(const SupervisionLoading());
+    if (!event.silent || state is! SupervisionLoaded) emit(const SupervisionLoading());
     try {
       // De menor a mayor confiabilidad, sin uno mismo (el backend no deja suspenderse a sí mismo)
       final all = await reputationRepository.getVerifiers(order: 'asc');
@@ -32,6 +32,12 @@ class SupervisionBloc extends Bloc<SupervisionEvent, SupervisionState> {
       ]));
     } catch (e) {
       final error = ApiException.from(e, 'No se pudo cargar a los Verificadores');
+      final latest = state;
+      // Una recarga silenciosa que falla deja la lista a la vista y solo avisa el error
+      if (event.silent && error.status != 403 && latest is SupervisionLoaded) {
+        emit(latest.copyWith(error: error.message));
+        return;
+      }
       emit(error.status == 403 ? const SupervisionForbidden() : SupervisionError(error.message));
     }
   }
@@ -58,7 +64,10 @@ class SupervisionBloc extends Bloc<SupervisionEvent, SupervisionState> {
         notice: 'Verificador suspendido',
       ));
     } catch (e) {
-      emit(current.copyWith(error: ApiException.from(e, 'No se pudo suspender al Verificador').message));
+      final error = ApiException.from(e, 'No se pudo suspender al Verificador');
+      emit(current.copyWith(error: error.message));
+      // 409: el Verificador cambió desde que se cargó la lista (ya suspendido o con otra confiabilidad)
+      if (error.status == 409) add(const SupervisionRequested(silent: true));
     }
   }
 
