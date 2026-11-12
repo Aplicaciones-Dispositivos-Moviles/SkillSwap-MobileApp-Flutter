@@ -25,6 +25,12 @@ class ReevaluationBloc extends Bloc<ReevaluationEvent, ReevaluationState> {
       emit(ReevaluationLoaded(candidates));
     } catch (e) {
       final error = ApiException.from(e, 'No se pudieron cargar los resultados');
+      final latest = state;
+      // Una recarga silenciosa que falla deja la lista a la vista y solo avisa el error
+      if (event.silent && error.status != 403 && latest is ReevaluationLoaded) {
+        emit(latest.copyWith(error: error.message));
+        return;
+      }
       emit(error.status == 403 ? const ReevaluationForbidden() : ReevaluationError(error.message));
     }
   }

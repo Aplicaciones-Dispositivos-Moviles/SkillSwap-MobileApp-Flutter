@@ -56,12 +56,13 @@ class CasesBloc extends Bloc<CasesEvent, CasesState> {
   Future<void> _onAvailabilityChanged(AvailabilityChanged event, Emitter<CasesState> emit) async {
     final current = state;
     if (current is! CasesLoaded || current.updatingAvailability || current.profile.suspended) return;
-    emit(current.copyWith(updatingAvailability: true));
+    emit(current.copyWith(updatingAvailability: true, clearAvailabilityError: true));
     try {
       final profile = await caseRepository.updateAvailability(event.available);
-      emit(_latest(current).copyWith(profile: profile));
+      emit(_latest(current).copyWith(profile: profile, updatingAvailability: false, clearAvailabilityError: true));
     } catch (e) {
       emit(_latest(current).copyWith(
+        updatingAvailability: false,
         availabilityError: ApiException.from(e, 'No se pudo actualizar tu disponibilidad').message,
       ));
     }

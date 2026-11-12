@@ -4,9 +4,11 @@ sealed class SupervisionEvent {
   const SupervisionEvent();
 }
 
-// Carga (o recarga) la lista de Verificadores.
+// Carga la lista de Verificadores; con [silent] la refresca sin mostrar el indicador de carga.
 class SupervisionRequested extends SupervisionEvent {
-  const SupervisionRequested();
+  final bool silent;
+
+  const SupervisionRequested({this.silent = false});
 }
 
 class VerifierSuspended extends SupervisionEvent {
