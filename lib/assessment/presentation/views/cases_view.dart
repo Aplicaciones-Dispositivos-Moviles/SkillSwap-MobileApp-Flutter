@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../iam/application/bloc/session_bloc.dart';
+import '../../../recognition/application/bloc/wallet_bloc.dart';
 import '../../../service_locator.dart';
 import '../../../shared/domain/utils/formatters.dart';
 import '../../../shared/presentation/components/message_view.dart';
@@ -19,6 +20,7 @@ class CasesView extends StatelessWidget {
 
   Future<void> _open(BuildContext context, VerificationCase item) async {
     final bloc = context.read<CasesBloc>();
+    final wallet = context.read<WalletBloc>();
     final resolved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => BlocProvider(
@@ -28,7 +30,10 @@ class CasesView extends StatelessWidget {
       ),
     );
     // Al resolver un caso se recargan la lista, el saldo y la confiabilidad
-    if (resolved == true) bloc.add(const CasesRequested());
+    if (resolved == true) {
+      bloc.add(const CasesRequested());
+      wallet.add(const WalletRequested());
+    }
   }
 
   void _openAvailability(BuildContext context) {
