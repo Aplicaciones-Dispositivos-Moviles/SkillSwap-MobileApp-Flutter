@@ -153,7 +153,7 @@ class _TransactionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final positive = transaction.amount >= 0;
+    final positive = transaction.isEarned;
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: CircleAvatar(
@@ -164,7 +164,7 @@ class _TransactionTile extends StatelessWidget {
       title: Text(transaction.title, style: text.titleSmall),
       subtitle: Text(shortDate(transaction.createdAt), style: text.bodySmall),
       trailing: Text(
-        '${positive ? '+' : ''}${transaction.amount}',
+        transaction.signedAmount,
         style: text.titleSmall?.copyWith(color: positive ? AppColors.success : AppColors.error),
       ),
     );

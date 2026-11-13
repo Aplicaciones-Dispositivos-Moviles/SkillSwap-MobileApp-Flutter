@@ -47,7 +47,7 @@ class CasesView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<SessionBloc>().state;
-    final username = session is Authenticated ? session.user.username : '';
+    final username = session is Authenticated ? session.user.greetingName : '';
     final text = Theme.of(context).textTheme;
 
     return Scaffold(
