@@ -164,5 +164,30 @@ void main() {
       expect([ganado, canje].hasRedeemed(RedeemableBenefit.badge), isTrue);
       expect([ganado].hasRedeemed(RedeemableBenefit.badge), isFalse);
     });
+
+    test('el título del movimiento se arma en español y no usa el texto en inglés del backend', () {
+      CreditTransaction movement(Map<String, dynamic> extra) =>
+          CreditTransaction.fromJson({'id': 1, 'amount': 25, 'createdAt': '2026-11-13T19:30:00Z', ...extra});
+
+      expect(movement({'type': 'Earned', 'description': 'Verification case resolved', 'relatedCaseId': 1}).title,
+          'Caso SK-1 resuelto');
+      expect(movement({'type': 'Earned', 'description': 'Final demonstration reviewed', 'relatedDemonstrationId': 4})
+          .title, 'Demostración final revisada');
+      expect(movement({'type': 'Earned', 'description': 'Anything'}).title, 'SkillCredits ganados');
+      expect(movement({'type': 'Redeemed', 'description': 'Redeemed: Badge', 'redemptionItem': 'Badge'}).title,
+          'Canje: Insignia');
+      expect(movement({'type': 'Redeemed', 'redemptionItem': 'NewItem'}).title, 'Canje de SkillCredits');
+    });
+
+    test('el signo sale del tipo: el backend manda el monto siempre positivo', () {
+      CreditTransaction movement(String type, int amount) =>
+          CreditTransaction.fromJson({'id': 1, 'amount': amount, 'type': type, 'createdAt': '2026-11-13T19:30:00Z'});
+
+      expect(movement('Redeemed', 200).isEarned, isFalse);
+      expect(movement('Redeemed', 200).signedAmount, '−200');
+      expect(movement('Redeemed', -500).signedAmount, '−500');
+      expect(movement('Earned', 25).isEarned, isTrue);
+      expect(movement('Earned', 25).signedAmount, '+25');
+    });
   });
 }
