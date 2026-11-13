@@ -1,15 +1,25 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:skillswap_verifier/assessment/application/bloc/case_review_bloc.dart';
+import 'package:skillswap_verifier/assessment/application/bloc/cases_bloc.dart';
+import 'package:skillswap_verifier/assessment/application/bloc/reevaluation_bloc.dart';
+import 'package:skillswap_verifier/assessment/domain/models/reevaluation_candidate.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verification_case.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verifier_profile.dart';
 import 'package:skillswap_verifier/assessment/domain/repositories/verification_case_repository.dart';
 import 'package:skillswap_verifier/iam/application/bloc/session_bloc.dart';
 import 'package:skillswap_verifier/iam/domain/models/auth_user.dart';
 import 'package:skillswap_verifier/iam/domain/repositories/auth_repository.dart';
+import 'package:skillswap_verifier/recognition/application/bloc/store_bloc.dart';
+import 'package:skillswap_verifier/recognition/domain/models/redeemable_benefit.dart';
+import 'package:skillswap_verifier/recognition/domain/models/shareable_credential.dart';
+import 'package:skillswap_verifier/recognition/domain/models/wallet.dart';
+import 'package:skillswap_verifier/recognition/domain/repositories/recognition_repository.dart';
 import 'package:skillswap_verifier/reputation/application/bloc/metrics_bloc.dart';
+import 'package:skillswap_verifier/reputation/application/bloc/supervision_bloc.dart';
 import 'package:skillswap_verifier/reputation/domain/models/platform_metrics.dart';
 import 'package:skillswap_verifier/reputation/domain/models/verifier_reliability.dart';
 import 'package:skillswap_verifier/reputation/domain/repositories/reputation_repository.dart';
+import 'package:skillswap_verifier/shared/domain/services/device_authenticator.dart';
 import 'package:skillswap_verifier/shared/infrastructure/network/api_exception.dart';
 
 // ---------- repositorios falsos ----------
@@ -32,7 +42,26 @@ VerificationCase _case({String status = 'Assigned', String? decision}) => Verifi
       'decision': decision, 'appealCount': 0,
     });
 
+VerifierProfile _profile({bool available = false, bool suspended = false}) => VerifierProfile.fromJson({
+      'id': 1, 'verifierUserId': 7, 'skillTags': ['sql'], 'available': available, 'verified': true,
+      'rating': 4.5, 'reviewCount': 3, 'suspended': suspended,
+    });
+
 class FakeCaseRepository implements VerificationCaseRepository {
+  VerifierProfile? profile;
+  bool failAvailability = false;
+  bool? sentAvailability;
+  int? sentSuspendedId;
+  String? sentJustification;
+  int? reinstatedId;
+  bool failSuspension = false;
+  List<ReevaluationCandidate> candidates = const [];
+  bool forbidCandidates = false;
+  bool failCandidates = false;
+  bool failOrder = false;
+  String? orderedType;
+  int? orderedId;
+  String? orderedJustification;
   String? sentDecision;
   String? sentNotes;
   bool alreadyResolved = false;
@@ -52,13 +81,111 @@ class FakeCaseRepository implements VerificationCaseRepository {
   Future<List<VerificationCase>> getAssignedCases() async => [_case()];
 
   @override
-  Future<VerifierProfile?> getMyProfile() async => null;
+  Future<VerifierProfile?> getMyProfile() async => profile;
+
+  @override
+  Future<VerifierProfile> updateAvailability(bool available) async {
+    if (failAvailability) throw const ApiException('No se pudo actualizar tu disponibilidad', status: 500);
+    sentAvailability = available;
+    return _profile(available: available);
+  }
+
+  @override
+  Future<VerifierProfile> suspendVerifier(int verifierUserId, String justification) async {
+    if (failSuspension) {
+      throw const ApiException('Solo se suspende a quien tiene confiabilidad menor a 60', status: 409);
+    }
+    sentSuspendedId = verifierUserId;
+    sentJustification = justification;
+    return _profile(suspended: true);
+  }
+
+  @override
+  Future<VerifierProfile> reinstateVerifier(int verifierUserId) async {
+    reinstatedId = verifierUserId;
+    return _profile();
+  }
+
+  @override
+  Future<List<ReevaluationCandidate>> getReevaluationCandidates({int limit = 50}) async {
+    if (forbidCandidates) throw const ApiException('No es Verificador senior', status: 403);
+    if (failCandidates) throw const ApiException('Sin conexión', status: 503);
+    return candidates;
+  }
+
+  @override
+  Future<void> orderReevaluation({
+    required String sourceType,
+    required int sourceId,
+    required String justification,
+  }) async {
+    if (failOrder) throw const ApiException('El resultado ya fue reevaluado', status: 409);
+    orderedType = sourceType;
+    orderedId = sourceId;
+    orderedJustification = justification;
+  }
+}
+
+class FakeDeviceAuthenticator implements DeviceAuthenticator {
+  final DeviceAuthResult result;
+  final bool throws;
+  int calls = 0;
+
+  FakeDeviceAuthenticator(this.result, {this.throws = false});
+
+  @override
+  Future<DeviceAuthResult> confirm(String reason) async {
+    calls++;
+    if (throws) throw StateError('falla del sensor');
+    return result;
+  }
+}
+
+class FakeRecognitionRepository implements RecognitionRepository {
+  String? redeemedItem;
+  bool failRedeem = false;
+  final List<String?> sentKeys = [];
+  // Errors thrown by the next redeem calls, in order (e.g. a lost connection, then success)
+  final List<ApiException> redeemErrors = [];
+
+  @override
+  Future<Wallet?> getWallet(int userId) async => null;
+
+  @override
+  Future<List<CreditTransaction>> getTransactions(int userId) async => const [];
+
+  @override
+  Future<List<ShareableCredential>> getShareableCredentials() async => const [];
+
+  @override
+  Future<ShareableCredential> createShareableCredential(String skillTag) async =>
+      throw UnimplementedError('No se usa en estas pruebas');
+
+  @override
+  Future<CreditTransaction> redeem(String item, {String? idempotencyKey}) async {
+    sentKeys.add(idempotencyKey);
+    if (failRedeem) throw const ApiException('Tu saldo no alcanza para este beneficio', status: 409);
+    if (redeemErrors.isNotEmpty) throw redeemErrors.removeAt(0);
+    redeemedItem = item;
+    return CreditTransaction(
+      id: 90,
+      amount: -500,
+      type: 'Redeemed',
+      description: null,
+      relatedCaseId: null,
+      createdAt: null,
+      redemptionItem: item,
+    );
+  }
 }
 
 class FakeReputationRepository implements ReputationRepository {
   final bool senior;
+  List<VerifierMetric> verifiers;
+  String? lastVerifiersOrder;
+  bool failVerifiers = false;
 
-  FakeReputationRepository({required this.senior});
+  FakeReputationRepository({required this.senior, this.verifiers = const []});
 
   ApiException get _forbidden => const ApiException('No es Verificador senior', status: 403);
 
@@ -71,11 +198,26 @@ class FakeReputationRepository implements ReputationRepository {
       senior ? const DifficultyMetrics([], []) : throw _forbidden;
 
   @override
-  Future<List<VerifierMetric>> getVerifiers() async => senior ? const [] : throw _forbidden;
+  Future<List<VerifierMetric>> getVerifiers({String order = 'desc'}) async {
+    lastVerifiersOrder = order;
+    if (failVerifiers) throw const ApiException('Sin conexión', status: 503);
+    return senior ? verifiers : throw _forbidden;
+  }
 
   @override
   Future<VerifierReliability?> getReliability(int verifierUserId) async => null;
 }
+
+VerifierMetric _metric(int id, int score, {bool suspended = false}) => VerifierMetric.fromJson({
+      'verifierUserId': id, 'fullName': 'Verificador $id', 'score': score, 'rank': 'Bronze',
+      'resolvedCasesCount': 10, 'missedDeadlinesCount': 2, 'seniorVerifier': false, 'suspended': suspended,
+    });
+
+ReevaluationCandidate _candidate(int id, {String type = 'Case', String? caseType = 'Quiz'}) =>
+    ReevaluationCandidate.fromJson({
+      'sourceType': type, 'sourceId': id, 'skillTag': 'python-data-science', 'caseType': caseType,
+      'resolvedAt': '2026-10-20T15:00:00Z', 'approvedByName': type == 'Case' ? 'Ana Ríos' : null,
+    });
 
 void main() {
   group('SessionBloc', () {
@@ -150,6 +292,526 @@ void main() {
       final bloc = MetricsBloc(reputationRepository: FakeReputationRepository(senior: false))
         ..add(const MetricsRequested());
       await expectLater(bloc.stream, emitsInOrder([isA<MetricsLoading>(), isA<MetricsForbidden>()]));
+      await bloc.close();
+    });
+  });
+
+  group('CasesLoaded', () {
+    test('copyWith conserva los campos que no se indican', () {
+      final state = CasesLoaded(
+        profile: _profile(),
+        cases: [_case()],
+        balance: 120,
+        updatingAvailability: true,
+        availabilityError: 'Sin conexión',
+      );
+      final copy = state.copyWith(profile: _profile(available: true));
+      expect(copy.profile.available, isTrue);
+      expect(copy.updatingAvailability, isTrue);
+      expect(copy.availabilityError, 'Sin conexión');
+      expect(copy.balance, 120);
+      expect(state.copyWith(clearAvailabilityError: true).availabilityError, isNull);
+    });
+  });
+
+  group('CasesBloc · disponibilidad', () {
+    CasesBloc buildBloc(FakeCaseRepository repo) => CasesBloc(
+          userId: 7,
+          caseRepository: repo,
+          reputationRepository: FakeReputationRepository(senior: false),
+          recognitionRepository: FakeRecognitionRepository(),
+        );
+
+    test('activa la disponibilidad y actualiza el perfil', () async {
+      final repo = FakeCaseRepository()..profile = _profile();
+      final bloc = buildBloc(repo)..add(const CasesRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<CasesLoading>(), isA<CasesLoaded>()]));
+      bloc.add(const AvailabilityChanged(true));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<CasesLoaded>().having((s) => s.updatingAvailability, 'updatingAvailability', isTrue),
+          isA<CasesLoaded>()
+              .having((s) => s.profile.available, 'available', isTrue)
+              .having((s) => s.updatingAvailability, 'updatingAvailability', isFalse),
+        ]),
+      );
+      expect(repo.sentAvailability, isTrue);
+      await bloc.close();
+    });
+
+    test('si falla conserva el valor anterior y muestra el error', () async {
+      final repo = FakeCaseRepository()
+        ..profile = _profile(available: true)
+        ..failAvailability = true;
+      final bloc = buildBloc(repo)..add(const CasesRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<CasesLoading>(), isA<CasesLoaded>()]));
+      bloc.add(const AvailabilityChanged(false));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<CasesLoaded>().having((s) => s.updatingAvailability, 'updatingAvailability', isTrue),
+          isA<CasesLoaded>()
+              .having((s) => s.profile.available, 'available', isTrue)
+              .having((s) => s.availabilityError, 'availabilityError', 'No se pudo actualizar tu disponibilidad'),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('un Verificador suspendido no puede cambiar su disponibilidad', () async {
+      final repo = FakeCaseRepository()..profile = _profile(suspended: true);
+      final bloc = buildBloc(repo)..add(const CasesRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<CasesLoading>(), isA<CasesLoaded>()]));
+      bloc.add(const AvailabilityChanged(true));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(repo.sentAvailability, isNull);
+      await bloc.close();
+    });
+  });
+
+  group('SupervisionBloc', () {
+    SupervisionBloc buildBloc(FakeCaseRepository repo, {bool senior = true, FakeReputationRepository? reputation}) =>
+        SupervisionBloc(
+          userId: 1,
+          reputationRepository: reputation ??
+              FakeReputationRepository(
+                senior: senior,
+                verifiers: [_metric(1, 95), _metric(2, 40), _metric(3, 80, suspended: true)],
+              ),
+          caseRepository: repo,
+        );
+
+    Future<SupervisionBloc> loadedBloc(FakeCaseRepository repo) async {
+      final bloc = buildBloc(repo)..add(const SupervisionRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<SupervisionLoading>(), isA<SupervisionLoaded>()]));
+      return bloc;
+    }
+
+    test('lista a los demás Verificadores de menor a mayor confiabilidad', () async {
+      final reputation = FakeReputationRepository(
+        senior: true,
+        verifiers: [_metric(1, 95), _metric(2, 40), _metric(3, 80)],
+      );
+      final bloc = buildBloc(FakeCaseRepository(), reputation: reputation)..add(const SupervisionRequested());
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoading>(),
+          isA<SupervisionLoaded>().having((s) => [for (final v in s.verifiers) v.verifierUserId], 'ids', [2, 3]),
+        ]),
+      );
+      expect(reputation.lastVerifiersOrder, 'asc');
+      await bloc.close();
+    });
+
+    test('un Verificador sin rango senior recibe 403', () async {
+      final bloc = buildBloc(FakeCaseRepository(), senior: false)..add(const SupervisionRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<SupervisionLoading>(), isA<SupervisionForbidden>()]));
+      await bloc.close();
+    });
+
+    test('suspende con la justificación y marca al Verificador como suspendido', () async {
+      final repo = FakeCaseRepository();
+      final bloc = await loadedBloc(repo);
+      bloc.add(const VerifierSuspended(2, '  Faltó a tres plazos  '));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoaded>().having((s) => s.busyUserId, 'busyUserId', 2),
+          isA<SupervisionLoaded>()
+              .having((s) => s.notice, 'notice', 'Verificador suspendido')
+              .having((s) => s.verifiers.first.suspended, 'suspended', isTrue)
+              .having((s) => s.busyUserId, 'busyUserId', isNull),
+        ]),
+      );
+      expect(repo.sentSuspendedId, 2);
+      expect(repo.sentJustification, 'Faltó a tres plazos');
+      await bloc.close();
+    });
+
+    test('exige la justificación y no llama al backend si está vacía', () async {
+      final repo = FakeCaseRepository();
+      final bloc = await loadedBloc(repo);
+      bloc.add(const VerifierSuspended(2, '   '));
+      await expectLater(
+        bloc.stream,
+        emits(isA<SupervisionLoaded>().having((s) => s.error, 'error', 'Escribe la justificación de la suspensión')),
+      );
+      expect(repo.sentSuspendedId, isNull);
+      await bloc.close();
+    });
+
+    test('si el backend rechaza la suspensión muestra el error y no cambia al Verificador', () async {
+      final repo = FakeCaseRepository()..failSuspension = true;
+      final bloc = await loadedBloc(repo);
+      bloc.add(const VerifierSuspended(2, 'Faltó a tres plazos'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoaded>().having((s) => s.busyUserId, 'busyUserId', 2),
+          isA<SupervisionLoaded>()
+              .having((s) => s.error, 'error', 'Solo se suspende a quien tiene confiabilidad menor a 60')
+              .having((s) => s.verifiers.first.suspended, 'suspended', isFalse),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('si la suspensión choca con un cambio (409) refresca la lista sin mostrar la carga', () async {
+      final reputation = FakeReputationRepository(senior: true, verifiers: [_metric(2, 40)]);
+      final repo = FakeCaseRepository()..failSuspension = true;
+      final bloc = buildBloc(repo, reputation: reputation)..add(const SupervisionRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<SupervisionLoading>(), isA<SupervisionLoaded>()]));
+      reputation.verifiers = [_metric(2, 40, suspended: true)]; // otro senior ya lo suspendió
+      bloc.add(const VerifierSuspended(2, 'Faltó a tres plazos'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoaded>().having((s) => s.busyUserId, 'busyUserId', 2),
+          isA<SupervisionLoaded>().having((s) => s.error, 'error', 'Solo se suspende a quien tiene confiabilidad menor a 60'),
+          isA<SupervisionLoaded>().having((s) => s.verifiers.single.suspended, 'suspended', isTrue),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('si la recarga tras el 409 falla conserva la lista y avisa el error', () async {
+      final reputation = FakeReputationRepository(senior: true, verifiers: [_metric(2, 40)]);
+      final repo = FakeCaseRepository()..failSuspension = true;
+      final bloc = buildBloc(repo, reputation: reputation)..add(const SupervisionRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<SupervisionLoading>(), isA<SupervisionLoaded>()]));
+      reputation.failVerifiers = true;
+      bloc.add(const VerifierSuspended(2, 'Faltó a tres plazos'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoaded>().having((s) => s.busyUserId, 'busyUserId', 2),
+          isA<SupervisionLoaded>().having((s) => s.error, 'error', 'Solo se suspende a quien tiene confiabilidad menor a 60'),
+          isA<SupervisionLoaded>()
+              .having((s) => s.error, 'error', 'Sin conexión')
+              .having((s) => s.verifiers.length, 'verifiers', 1),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('rechaza una justificación de más de 2000 caracteres sin llamar al backend', () async {
+      final repo = FakeCaseRepository();
+      final bloc = await loadedBloc(repo);
+      bloc.add(VerifierSuspended(2, 'a' * (VerifierMetric.justificationMaxLength + 1)));
+      await expectLater(
+        bloc.stream,
+        emits(isA<SupervisionLoaded>().having(
+          (s) => s.error,
+          'error',
+          'La justificación no puede pasar de ${VerifierMetric.justificationMaxLength} caracteres',
+        )),
+      );
+      expect(repo.sentSuspendedId, isNull);
+      await bloc.close();
+    });
+
+    test('reactiva a un Verificador suspendido', () async {
+      final repo = FakeCaseRepository();
+      final bloc = await loadedBloc(repo);
+      bloc.add(const VerifierReinstated(3));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<SupervisionLoaded>().having((s) => s.busyUserId, 'busyUserId', 3),
+          isA<SupervisionLoaded>()
+              .having((s) => s.notice, 'notice', 'Verificador reactivado')
+              .having((s) => s.verifiers.last.suspended, 'suspended', isFalse),
+        ]),
+      );
+      expect(repo.reinstatedId, 3);
+      await bloc.close();
+    });
+  });
+
+  group('ReevaluationBloc', () {
+    Future<(ReevaluationBloc, FakeCaseRepository)> loadedBloc({FakeCaseRepository? repo}) async {
+      final fake = repo ?? (FakeCaseRepository()..candidates = [_candidate(1), _candidate(2, type: 'Attempt', caseType: null)]);
+      final bloc = ReevaluationBloc(caseRepository: fake)..add(const ReevaluationsRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<ReevaluationLoading>(), isA<ReevaluationLoaded>()]));
+      return (bloc, fake);
+    }
+
+    test('carga los resultados que se pueden reevaluar', () async {
+      final repo = FakeCaseRepository()..candidates = [_candidate(1), _candidate(2, type: 'Attempt', caseType: null)];
+      final bloc = ReevaluationBloc(caseRepository: repo)..add(const ReevaluationsRequested());
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReevaluationLoading>(),
+          isA<ReevaluationLoaded>().having((s) => s.candidates.length, 'candidates', 2),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('quien no es senior recibe 403', () async {
+      final repo = FakeCaseRepository()..forbidCandidates = true;
+      final bloc = ReevaluationBloc(caseRepository: repo)..add(const ReevaluationsRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<ReevaluationLoading>(), isA<ReevaluationForbidden>()]));
+      await bloc.close();
+    });
+
+    test('ordena la reevaluación con la justificación y quita el resultado de la lista', () async {
+      final (bloc, repo) = await loadedBloc();
+      bloc.add(ReevaluationOrdered(_candidate(1), '  La rúbrica no respalda la nota  '));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReevaluationLoaded>().having((s) => s.busyKey, 'busyKey', 'Case-1'),
+          isA<ReevaluationLoaded>()
+              .having((s) => s.notice, 'notice', 'Reevaluación ordenada')
+              .having((s) => [for (final c in s.candidates) c.key], 'keys', ['Attempt-2'])
+              .having((s) => s.busyKey, 'busyKey', isNull),
+        ]),
+      );
+      expect(repo.orderedType, 'Case');
+      expect(repo.orderedId, 1);
+      expect(repo.orderedJustification, 'La rúbrica no respalda la nota');
+      await bloc.close();
+    });
+
+    test('exige la justificación y no llama al backend si está vacía', () async {
+      final (bloc, repo) = await loadedBloc();
+      bloc.add(ReevaluationOrdered(_candidate(1), '   '));
+      await expectLater(
+        bloc.stream,
+        emits(isA<ReevaluationLoaded>().having((s) => s.error, 'error', 'Escribe la justificación de la reevaluación')),
+      );
+      expect(repo.orderedId, isNull);
+      await bloc.close();
+    });
+
+    test('si el resultado ya cambió (409) muestra el error y refresca la lista sin cargar', () async {
+      final repo = FakeCaseRepository()
+        ..candidates = [_candidate(1), _candidate(3)]
+        ..failOrder = true;
+      final (bloc, _) = await loadedBloc(repo: repo);
+      repo.candidates = [_candidate(3)]; // el backend ya no lista el resultado 1
+      bloc.add(ReevaluationOrdered(_candidate(1), 'Dudo de la nota'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReevaluationLoaded>().having((s) => s.busyKey, 'busyKey', 'Case-1'),
+          isA<ReevaluationLoaded>().having((s) => s.error, 'error', 'El resultado ya fue reevaluado'),
+          isA<ReevaluationLoaded>().having((s) => [for (final c in s.candidates) c.key], 'keys', ['Case-3']),
+        ]),
+      );
+      await bloc.close();
+    });
+  });
+
+  group('ReevaluationBloc · errores', () {
+    test('si la recarga tras el 409 falla conserva la lista y avisa el error', () async {
+      final repo = FakeCaseRepository()
+        ..candidates = [_candidate(1), _candidate(3)]
+        ..failOrder = true;
+      final bloc = ReevaluationBloc(caseRepository: repo)..add(const ReevaluationsRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<ReevaluationLoading>(), isA<ReevaluationLoaded>()]));
+      repo.failCandidates = true;
+      bloc.add(ReevaluationOrdered(_candidate(1), 'Dudo de la nota'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReevaluationLoaded>().having((s) => s.busyKey, 'busyKey', 'Case-1'),
+          isA<ReevaluationLoaded>().having((s) => s.error, 'error', 'El resultado ya fue reevaluado'),
+          isA<ReevaluationLoaded>()
+              .having((s) => s.error, 'error', 'Sin conexión')
+              .having((s) => s.candidates.length, 'candidates', 2),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('rechaza una justificación de más de 2000 caracteres sin llamar al backend', () async {
+      final repo = FakeCaseRepository()..candidates = [_candidate(1)];
+      final bloc = ReevaluationBloc(caseRepository: repo)..add(const ReevaluationsRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<ReevaluationLoading>(), isA<ReevaluationLoaded>()]));
+      bloc.add(ReevaluationOrdered(_candidate(1), 'a' * (ReevaluationCandidate.justificationMaxLength + 1)));
+      await expectLater(
+        bloc.stream,
+        emits(isA<ReevaluationLoaded>().having(
+          (s) => s.error,
+          'error',
+          'La justificación no puede pasar de ${ReevaluationCandidate.justificationMaxLength} caracteres',
+        )),
+      );
+      expect(repo.orderedId, isNull);
+      await bloc.close();
+    });
+  });
+
+  group('ReevaluationCandidate', () {
+    test('nombra el tipo de resultado y arma la clave', () {
+      expect(_candidate(5, type: 'Attempt', caseType: null).kindLabel, 'Quiz aprobado');
+      expect(_candidate(5).kindLabel, 'Quiz aprobado con revisión');
+      expect(_candidate(5, caseType: 'MiniProject').kindLabel, 'Mini proyecto aprobado');
+      expect(_candidate(5, type: 'Attempt', caseType: null).key, 'Attempt-5');
+    });
+  });
+
+  group('StoreBloc', () {
+    StoreBloc buildBloc(FakeRecognitionRepository repo, FakeDeviceAuthenticator auth) =>
+        StoreBloc(recognitionRepository: repo, deviceAuthenticator: auth);
+
+    group('clave de idempotencia', () {
+      // Keys are numbered so each test can tell a reused key from a new one
+      StoreBloc keyedBloc(FakeRecognitionRepository repo) {
+        var next = 0;
+        return StoreBloc(
+          recognitionRepository: repo,
+          deviceAuthenticator: FakeDeviceAuthenticator(DeviceAuthResult.confirmed),
+          newIdempotencyKey: () => 'key-${++next}',
+        );
+      }
+
+      Future<void> redeem(StoreBloc bloc, RedeemableBenefit benefit) async {
+        bloc.add(RedeemRequested(benefit));
+        await bloc.stream.firstWhere((s) => s is StoreRedeemed || s is StoreFailed);
+      }
+
+      test('envía una clave en cada canje', () async {
+        final repo = FakeRecognitionRepository();
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        expect(repo.sentKeys, ['key-1']);
+        await bloc.close();
+      });
+
+      test('si no hubo respuesta, el reintento del mismo beneficio reutiliza la clave', () async {
+        final repo = FakeRecognitionRepository()..redeemErrors.add(const ApiException('No se pudo conectar con el servidor'));
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        await redeem(bloc, RedeemableBenefit.badge);
+        expect(repo.sentKeys, ['key-1', 'key-1']);
+        expect(bloc.state, isA<StoreRedeemed>());
+        await bloc.close();
+      });
+
+      test('tras un error 5xx también reutiliza la clave, porque no se sabe si se cobró', () async {
+        final repo = FakeRecognitionRepository()..redeemErrors.add(const ApiException('Error interno', status: 503));
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        await redeem(bloc, RedeemableBenefit.badge);
+        expect(repo.sentKeys, ['key-1', 'key-1']);
+        await bloc.close();
+      });
+
+      test('después de un canje exitoso el siguiente usa una clave nueva', () async {
+        final repo = FakeRecognitionRepository();
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        await redeem(bloc, RedeemableBenefit.badge);
+        expect(repo.sentKeys, ['key-1', 'key-2']);
+        await bloc.close();
+      });
+
+      test('si el backend rechaza el canje (409) el siguiente intento usa una clave nueva', () async {
+        final repo = FakeRecognitionRepository()..redeemErrors.add(const ApiException('Tu saldo no alcanza', status: 409));
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        await redeem(bloc, RedeemableBenefit.badge);
+        expect(repo.sentKeys, ['key-1', 'key-2']);
+        await bloc.close();
+      });
+
+      test('otro beneficio no reutiliza la clave pendiente', () async {
+        final repo = FakeRecognitionRepository()..redeemErrors.add(const ApiException('No se pudo conectar con el servidor'));
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        await redeem(bloc, RedeemableBenefit.advancedPathUnlock);
+        expect(repo.sentKeys, ['key-1', 'key-2']);
+        await bloc.close();
+      });
+    });
+
+    test('canjea el beneficio después de confirmar con el dispositivo', () async {
+      final repo = FakeRecognitionRepository();
+      final auth = FakeDeviceAuthenticator(DeviceAuthResult.confirmed);
+      final bloc = buildBloc(repo, auth)..add(const RedeemRequested(RedeemableBenefit.advancedPathUnlock));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<StoreRedeeming>().having((s) => s.benefit, 'benefit', RedeemableBenefit.advancedPathUnlock),
+          isA<StoreRedeemed>()
+              .having((s) => s.benefit, 'benefit', RedeemableBenefit.advancedPathUnlock)
+              .having((s) => s.transaction.redemptionItem, 'redemptionItem', 'AdvancedPathUnlock'),
+        ]),
+      );
+      expect(auth.calls, 1);
+      expect(repo.redeemedItem, 'AdvancedPathUnlock');
+      await bloc.close();
+    });
+
+    test('si no confirma su identidad no llama al backend', () async {
+      final repo = FakeRecognitionRepository();
+      final auth = FakeDeviceAuthenticator(DeviceAuthResult.cancelled);
+      final bloc = buildBloc(repo, auth)..add(const RedeemRequested(RedeemableBenefit.badge));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<StoreRedeeming>(),
+          isA<StoreFailed>()
+              .having((s) => s.message, 'message', 'No se confirmó tu identidad, así que no se hizo el canje.'),
+        ]),
+      );
+      expect(repo.redeemedItem, isNull);
+      await bloc.close();
+    });
+
+    test('sin bloqueo de pantalla en el dispositivo no se puede canjear', () async {
+      final repo = FakeRecognitionRepository();
+      final auth = FakeDeviceAuthenticator(DeviceAuthResult.unavailable);
+      final bloc = buildBloc(repo, auth)..add(const RedeemRequested(RedeemableBenefit.badge));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<StoreRedeeming>(),
+          isA<StoreFailed>().having(
+            (s) => s.message,
+            'message',
+            'Configura un bloqueo de pantalla (huella, PIN o patrón) en tu dispositivo para canjear.',
+          ),
+        ]),
+      );
+      expect(repo.redeemedItem, isNull);
+      await bloc.close();
+    });
+
+    test('si el sensor falla de forma inesperada avisa y no canjea', () async {
+      final repo = FakeRecognitionRepository();
+      final auth = FakeDeviceAuthenticator(DeviceAuthResult.confirmed, throws: true);
+      final bloc = buildBloc(repo, auth)..add(const RedeemRequested(RedeemableBenefit.badge));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<StoreRedeeming>(),
+          isA<StoreFailed>()
+              .having((s) => s.message, 'message', 'No se pudo confirmar tu identidad. Inténtalo de nuevo.'),
+        ]),
+      );
+      expect(repo.redeemedItem, isNull);
+      await bloc.close();
+    });
+
+    test('si el backend rechaza el canje (409) muestra su mensaje', () async {
+      final repo = FakeRecognitionRepository()..failRedeem = true;
+      final auth = FakeDeviceAuthenticator(DeviceAuthResult.confirmed);
+      final bloc = buildBloc(repo, auth)..add(const RedeemRequested(RedeemableBenefit.sponsoredCertification));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<StoreRedeeming>(),
+          isA<StoreFailed>().having((s) => s.message, 'message', 'Tu saldo no alcanza para este beneficio'),
+        ]),
+      );
+      expect(auth.calls, 1);
       await bloc.close();
     });
   });

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../iam/application/bloc/session_bloc.dart';
+import '../../../recognition/application/bloc/wallet_bloc.dart';
 import '../../../service_locator.dart';
 import '../../../shared/domain/utils/formatters.dart';
 import '../../../shared/presentation/components/message_view.dart';
@@ -10,6 +11,7 @@ import '../../../shared/presentation/design/app_colors.dart';
 import '../../application/bloc/case_review_bloc.dart';
 import '../../application/bloc/cases_bloc.dart';
 import '../../domain/models/verification_case.dart';
+import 'availability_view.dart';
 import 'case_review_view.dart';
 
 // T71 · Mock-up 13 "Inicio del Verificador": disponibilidad, resumen y casos asignados.
@@ -18,6 +20,7 @@ class CasesView extends StatelessWidget {
 
   Future<void> _open(BuildContext context, VerificationCase item) async {
     final bloc = context.read<CasesBloc>();
+    final wallet = context.read<WalletBloc>();
     final resolved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => BlocProvider(
@@ -27,13 +30,24 @@ class CasesView extends StatelessWidget {
       ),
     );
     // Al resolver un caso se recargan la lista, el saldo y la confiabilidad
-    if (resolved == true) bloc.add(const CasesRequested());
+    if (resolved == true) {
+      bloc.add(const CasesRequested());
+      wallet.add(const WalletRequested());
+    }
+  }
+
+  void _openAvailability(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider.value(value: context.read<CasesBloc>(), child: const AvailabilityView()),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final session = context.watch<SessionBloc>().state;
-    final username = session is Authenticated ? session.user.username : '';
+    final username = session is Authenticated ? session.user.greetingName : '';
     final text = Theme.of(context).textTheme;
 
     return Scaffold(
@@ -88,7 +102,7 @@ class CasesView extends StatelessWidget {
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
                   children: [
-                    _AvailabilityCard(loaded),
+                    _AvailabilityCard(loaded, onTap: () => _openAvailability(context)),
                     const SizedBox(height: 16),
                     _SummaryRow(loaded),
                     const SizedBox(height: 24),
@@ -121,11 +135,12 @@ class CasesView extends StatelessWidget {
   }
 }
 
-// Disponibilidad y habilidades que revisa (se cambia en la pantalla de disponibilidad, T72)
+// Disponibilidad y habilidades que revisa; al tocarla se abre la pantalla de disponibilidad (T72)
 class _AvailabilityCard extends StatelessWidget {
   final CasesLoaded state;
+  final VoidCallback onTap;
 
-  const _AvailabilityCard(this.state);
+  const _AvailabilityCard(this.state, {required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -137,29 +152,34 @@ class _AvailabilityCard extends StatelessWidget {
             ? ('Disponible para casos', AppColors.success, AppColors.successContainer, Icons.check_circle)
             : ('En pausa', AppColors.warning, AppColors.warningContainer, Icons.pause_circle);
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(color: container, borderRadius: BorderRadius.circular(12)),
-              child: Icon(icon, color: color),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: text.titleSmall),
-                  Text(
-                    profile.skillTags.map(skillLabel).join(' · '),
-                    style: text.bodySmall?.copyWith(color: AppColors.textSecondary),
-                  ),
-                ],
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: container, borderRadius: BorderRadius.circular(12)),
+                child: Icon(icon, color: color),
               ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: text.titleSmall),
+                    Text(
+                      profile.skillTags.map(skillLabel).join(' · '),
+                      style: text.bodySmall?.copyWith(color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: AppColors.textSecondary),
+            ],
+          ),
         ),
       ),
     );

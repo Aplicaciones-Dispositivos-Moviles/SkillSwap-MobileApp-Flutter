@@ -22,8 +22,33 @@ class CasesLoaded extends CasesState {
   final List<VerificationCase> cases;
   final VerifierReliability? reliability;
   final int? balance;
+  final bool updatingAvailability;
+  final String? availabilityError;
 
-  const CasesLoaded({required this.profile, required this.cases, this.reliability, this.balance});
+  const CasesLoaded({
+    required this.profile,
+    required this.cases,
+    this.reliability,
+    this.balance,
+    this.updatingAvailability = false,
+    this.availabilityError,
+  });
+
+  // Copia que conserva lo que no se indica; [clearAvailabilityError] borra el aviso de error.
+  CasesLoaded copyWith({
+    VerifierProfile? profile,
+    bool? updatingAvailability,
+    String? availabilityError,
+    bool clearAvailabilityError = false,
+  }) =>
+      CasesLoaded(
+        profile: profile ?? this.profile,
+        cases: cases,
+        reliability: reliability,
+        balance: balance,
+        updatingAvailability: updatingAvailability ?? this.updatingAvailability,
+        availabilityError: clearAvailabilityError ? null : availabilityError ?? this.availabilityError,
+      );
 
   List<VerificationCase> get pending => cases.where((c) => !c.isResolved).toList();
   bool get isSenior => reliability?.seniorVerifier ?? false;

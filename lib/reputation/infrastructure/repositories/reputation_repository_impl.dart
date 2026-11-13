@@ -45,9 +45,9 @@ class ReputationRepositoryImpl implements ReputationRepository {
   }
 
   @override
-  Future<List<VerifierMetric>> getVerifiers() async {
+  Future<List<VerifierMetric>> getVerifiers({String order = 'desc'}) async {
     try {
-      final response = await dio.get('/api/v1/metrics/verifiers', queryParameters: {'order': 'desc'});
+      final response = await dio.get('/api/v1/metrics/verifiers', queryParameters: {'order': order});
       return verifierMetricsFromJson(response.data as Map<String, dynamic>);
     } catch (e) {
       throw ApiException.from(e, 'No se pudo cargar el desempeño de los Verificadores');

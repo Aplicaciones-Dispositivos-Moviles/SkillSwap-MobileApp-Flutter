@@ -38,8 +38,9 @@ class AuthRepositoryImpl implements AuthRepository {
         '/api/v1/authentication/sign-in',
         data: {'username': username, 'password': password},
       );
-      final user = AuthUser.fromJson(response.data as Map<String, dynamic>);
-      token.value = user.token;
+      final signedIn = AuthUser.fromJson(response.data as Map<String, dynamic>);
+      token.value = signedIn.token;
+      final user = signedIn.withFullName(await _readFullName());
       await storage.write(_sessionKey, jsonEncode(user.toJson()));
       return user;
     } on DioException catch (e) {
@@ -50,6 +51,17 @@ class AuthRepositoryImpl implements AuthRepository {
           throw const ApiException('Verifica tu correo institucional antes de ingresar', status: 403);
       }
       throw ApiException.from(e, 'No se pudo iniciar sesión');
+    }
+  }
+
+  // El nombre completo solo viene en el perfil propio; si falla, se saluda con el usuario.
+  Future<String?> _readFullName() async {
+    try {
+      final response = await dio.get('/api/v1/users/me');
+      final name = (response.data as Map<String, dynamic>)['fullName'] as String?;
+      return (name == null || name.trim().isEmpty) ? null : name.trim();
+    } catch (_) {
+      return null;
     }
   }
 
