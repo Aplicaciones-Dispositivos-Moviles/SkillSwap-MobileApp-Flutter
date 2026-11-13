@@ -144,6 +144,9 @@ class FakeDeviceAuthenticator implements DeviceAuthenticator {
 class FakeRecognitionRepository implements RecognitionRepository {
   String? redeemedItem;
   bool failRedeem = false;
+  final List<String?> sentKeys = [];
+  // Errors thrown by the next redeem calls, in order (e.g. a lost connection, then success)
+  final List<ApiException> redeemErrors = [];
 
   @override
   Future<Wallet?> getWallet(int userId) async => null;
@@ -159,8 +162,10 @@ class FakeRecognitionRepository implements RecognitionRepository {
       throw UnimplementedError('No se usa en estas pruebas');
 
   @override
-  Future<CreditTransaction> redeem(String item) async {
+  Future<CreditTransaction> redeem(String item, {String? idempotencyKey}) async {
+    sentKeys.add(idempotencyKey);
     if (failRedeem) throw const ApiException('Tu saldo no alcanza para este beneficio', status: 409);
+    if (redeemErrors.isNotEmpty) throw redeemErrors.removeAt(0);
     redeemedItem = item;
     return CreditTransaction(
       id: 90,
@@ -654,6 +659,77 @@ void main() {
   group('StoreBloc', () {
     StoreBloc buildBloc(FakeRecognitionRepository repo, FakeDeviceAuthenticator auth) =>
         StoreBloc(recognitionRepository: repo, deviceAuthenticator: auth);
+
+    group('clave de idempotencia', () {
+      // Keys are numbered so each test can tell a reused key from a new one
+      StoreBloc keyedBloc(FakeRecognitionRepository repo) {
+        var next = 0;
+        return StoreBloc(
+          recognitionRepository: repo,
+          deviceAuthenticator: FakeDeviceAuthenticator(DeviceAuthResult.confirmed),
+          newIdempotencyKey: () => 'key-${++next}',
+        );
+      }
+
+      Future<void> redeem(StoreBloc bloc, RedeemableBenefit benefit) async {
+        bloc.add(RedeemRequested(benefit));
+        await bloc.stream.firstWhere((s) => s is StoreRedeemed || s is StoreFailed);
+      }
+
+      test('envía una clave en cada canje', () async {
+        final repo = FakeRecognitionRepository();
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        expect(repo.sentKeys, ['key-1']);
+        await bloc.close();
+      });
+
+      test('si no hubo respuesta, el reintento del mismo beneficio reutiliza la clave', () async {
+        final repo = FakeRecognitionRepository()..redeemErrors.add(const ApiException('No se pudo conectar con el servidor'));
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        await redeem(bloc, RedeemableBenefit.badge);
+        expect(repo.sentKeys, ['key-1', 'key-1']);
+        expect(bloc.state, isA<StoreRedeemed>());
+        await bloc.close();
+      });
+
+      test('tras un error 5xx también reutiliza la clave, porque no se sabe si se cobró', () async {
+        final repo = FakeRecognitionRepository()..redeemErrors.add(const ApiException('Error interno', status: 503));
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        await redeem(bloc, RedeemableBenefit.badge);
+        expect(repo.sentKeys, ['key-1', 'key-1']);
+        await bloc.close();
+      });
+
+      test('después de un canje exitoso el siguiente usa una clave nueva', () async {
+        final repo = FakeRecognitionRepository();
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        await redeem(bloc, RedeemableBenefit.badge);
+        expect(repo.sentKeys, ['key-1', 'key-2']);
+        await bloc.close();
+      });
+
+      test('si el backend rechaza el canje (409) el siguiente intento usa una clave nueva', () async {
+        final repo = FakeRecognitionRepository()..redeemErrors.add(const ApiException('Tu saldo no alcanza', status: 409));
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        await redeem(bloc, RedeemableBenefit.badge);
+        expect(repo.sentKeys, ['key-1', 'key-2']);
+        await bloc.close();
+      });
+
+      test('otro beneficio no reutiliza la clave pendiente', () async {
+        final repo = FakeRecognitionRepository()..redeemErrors.add(const ApiException('No se pudo conectar con el servidor'));
+        final bloc = keyedBloc(repo);
+        await redeem(bloc, RedeemableBenefit.badge);
+        await redeem(bloc, RedeemableBenefit.advancedPathUnlock);
+        expect(repo.sentKeys, ['key-1', 'key-2']);
+        await bloc.close();
+      });
+    });
 
     test('canjea el beneficio después de confirmar con el dispositivo', () async {
       final repo = FakeRecognitionRepository();

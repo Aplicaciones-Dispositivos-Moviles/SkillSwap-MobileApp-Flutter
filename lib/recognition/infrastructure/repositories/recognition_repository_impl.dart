@@ -56,9 +56,13 @@ class RecognitionRepositoryImpl implements RecognitionRepository {
   }
 
   @override
-  Future<CreditTransaction> redeem(String item) async {
+  Future<CreditTransaction> redeem(String item, {String? idempotencyKey}) async {
     try {
-      final response = await dio.post('/api/v1/credit-transactions/redeem', data: {'item': item});
+      final response = await dio.post(
+        '/api/v1/credit-transactions/redeem',
+        data: {'item': item},
+        options: idempotencyKey == null ? null : Options(headers: {'Idempotency-Key': idempotencyKey}),
+      );
       return CreditTransaction.fromJson(response.data as Map<String, dynamic>);
     } catch (e) {
       throw ApiException.from(e, 'No se pudo canjear el beneficio');

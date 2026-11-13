@@ -1,6 +1,7 @@
 import 'package:bloc/bloc.dart';
 
 import '../../../shared/domain/services/device_authenticator.dart';
+import '../../../shared/domain/utils/idempotency_key.dart';
 import '../../../shared/infrastructure/network/api_exception.dart';
 import '../../domain/models/redeemable_benefit.dart';
 import '../../domain/models/wallet.dart';
@@ -13,8 +14,17 @@ part 'store_state.dart';
 class StoreBloc extends Bloc<StoreEvent, StoreState> {
   final RecognitionRepository recognitionRepository;
   final DeviceAuthenticator deviceAuthenticator;
+  final String Function() newIdempotencyKey;
 
-  StoreBloc({required this.recognitionRepository, required this.deviceAuthenticator}) : super(const StoreIdle()) {
+  // Key of a redeem whose outcome is unknown (no response or 5xx), reused if the same benefit is retried
+  ({String item, String key})? _pending;
+
+  StoreBloc({
+    required this.recognitionRepository,
+    required this.deviceAuthenticator,
+    String Function()? newIdempotencyKey,
+  })  : newIdempotencyKey = newIdempotencyKey ?? generateIdempotencyKey,
+        super(const StoreIdle()) {
     on<RedeemRequested>(_onRedeem);
   }
 
@@ -42,11 +52,20 @@ class StoreBloc extends Bloc<StoreEvent, StoreState> {
         break;
     }
 
+    final item = benefit.apiValue;
+    final pending = _pending;
+    final key = pending != null && pending.item == item ? pending.key : newIdempotencyKey();
+    _pending = (item: item, key: key);
     try {
-      final transaction = await recognitionRepository.redeem(benefit.apiValue);
+      final transaction = await recognitionRepository.redeem(item, idempotencyKey: key);
+      _pending = null;
       emit(StoreRedeemed(benefit, transaction));
     } catch (e) {
-      emit(StoreFailed(ApiException.from(e, 'No se pudo canjear el beneficio').message));
+      final error = ApiException.from(e, 'No se pudo canjear el beneficio');
+      // A 4xx is a definitive answer; without a response or with a 5xx the debit may have happened
+      final status = error.status;
+      if (status != null && status < 500) _pending = null;
+      emit(StoreFailed(error.message));
     }
   }
 }
