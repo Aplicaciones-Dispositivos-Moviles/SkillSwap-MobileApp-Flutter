@@ -1,4 +1,5 @@
 import '../models/reevaluation_candidate.dart';
+import '../models/review_deadline_policy.dart';
 import '../models/verification_case.dart';
 import '../models/verifier_profile.dart';
 
@@ -28,4 +29,13 @@ abstract class VerificationCaseRepository {
 
   // T60 · sourceType: Attempt | Case. 409 si el resultado ya no se puede reevaluar.
   Future<void> orderReevaluation({required String sourceType, required int sourceId, required String justification});
+
+  // US39 · Plazo con el que se resuelven los casos de cada plan, el mensual primero.
+  Future<List<ReviewDeadlinePolicy>> getReviewDeadlines();
+
+  // US39 · Verificador senior: define el plazo de cada plan (1 a 48 horas y 1 a 5 días hábiles); 403 si no es senior.
+  Future<List<ReviewDeadlinePolicy>> defineReviewDeadlines({
+    required int premiumPlanHours,
+    required int freePlanBusinessDays,
+  });
 }
