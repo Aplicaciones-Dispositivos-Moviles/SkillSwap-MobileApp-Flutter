@@ -7,6 +7,7 @@ import 'service_locator.dart';
 import 'shared/infrastructure/network/session_token.dart';
 import 'shared/presentation/design/app_theme.dart';
 import 'shared/presentation/views/main_layout.dart';
+import 'shared/presentation/views/splash_view.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,7 +39,7 @@ class SkillSwapVerifierApp extends StatelessWidget {
         buildWhen: (previous, current) => (previous is Authenticated) != (current is Authenticated) ||
             previous is SessionUnknown,
         builder: (context, state) => switch (state) {
-          SessionUnknown() => const Scaffold(body: Center(child: CircularProgressIndicator())),
+          SessionUnknown() => const SplashView(),
           Authenticated(:final user) => MainLayout(key: ValueKey(user.id)),
           _ => const LoginView(),
         },
