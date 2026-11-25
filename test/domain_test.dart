@@ -3,6 +3,7 @@ import 'package:skillswap_verifier/assessment/domain/models/review_deadline_poli
 import 'package:skillswap_verifier/assessment/domain/models/rubric.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verification_case.dart';
 import 'package:skillswap_verifier/moderation/domain/models/dispute.dart';
+import 'package:skillswap_verifier/moderation/domain/models/dispute_evidence.dart';
 import 'package:skillswap_verifier/recognition/domain/models/redeemable_benefit.dart';
 import 'package:skillswap_verifier/recognition/domain/models/shareable_credential.dart';
 import 'package:skillswap_verifier/recognition/domain/models/wallet.dart';
@@ -184,6 +185,44 @@ void main() {
 
     test('un motivo desconocido se muestra tal cual y uno vacío se ignora', () {
       expect(Dispute.fromJson({...json, 'reason': 'NuevaRegla,'}).reasons, ['NuevaRegla']);
+    });
+  });
+
+  group('Evidencia de la disputa', () {
+    final certificate = {
+      'id': 77,
+      'holderName': 'Ana Pérez',
+      'institutionName': 'Coursera',
+      'courseName': 'SQL básico',
+      'issueDate': '2026-03-05',
+      'certificateNumber': 'C-123',
+      'verificationCode': 'V-9',
+      'verificationUrl': 'https://coursera.org/verify/V-9',
+      'status': 'Suspicious',
+      'riskLevel': 'HighRisk',
+      'holderNameMismatch': true,
+      'createdAt': '2026-11-20T09:00:00Z',
+      'fileUrl': 'https://files.test/c.pdf',
+    };
+    final dispute = {
+      'id': 12, 'sourceType': 'CertificateReview', 'sourceReferenceId': 77, 'reason': 'DuplicateFile',
+      'status': 'Pending',
+    };
+
+    test('lee el certificado en revisión con su fecha y su riesgo', () {
+      final evidence = DisputeEvidence.fromJson({'dispute': dispute, 'certificate': certificate});
+      final cert = evidence.certificate!;
+      expect(evidence.dispute.id, 12);
+      expect(cert.issueDateLabel, '05/03/2026');
+      expect(cert.riskLabel, 'Riesgo alto');
+      expect(cert.holderNameMismatch, isTrue);
+      expect(cert.fileUrl, 'https://files.test/c.pdf');
+    });
+
+    test('el certificado puede venir null y los riesgos se nombran en español', () {
+      expect(DisputeEvidence.fromJson({'dispute': dispute, 'certificate': null}).certificate, isNull);
+      expect(CertificateEvidence.fromJson({...certificate, 'riskLevel': 'LowRisk'}).riskLabel, 'Riesgo bajo');
+      expect(CertificateEvidence.fromJson({...certificate, 'riskLevel': 'Review'}).riskLabel, 'Requiere revisión');
     });
   });
 
