@@ -2,7 +2,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:skillswap_verifier/assessment/application/bloc/case_review_bloc.dart';
 import 'package:skillswap_verifier/assessment/application/bloc/cases_bloc.dart';
 import 'package:skillswap_verifier/assessment/application/bloc/reevaluation_bloc.dart';
+import 'package:skillswap_verifier/assessment/application/bloc/review_deadline_bloc.dart';
 import 'package:skillswap_verifier/assessment/domain/models/reevaluation_candidate.dart';
+import 'package:skillswap_verifier/assessment/domain/models/review_deadline_policy.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verification_case.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verifier_profile.dart';
 import 'package:skillswap_verifier/assessment/domain/repositories/verification_case_repository.dart';
@@ -47,6 +49,12 @@ VerifierProfile _profile({bool available = false, bool suspended = false}) => Ve
       'rating': 4.5, 'reviewCount': 3, 'suspended': suspended,
     });
 
+ReviewDeadlinePolicy _deadline(String plan, int amount, {bool bySenior = false}) => ReviewDeadlinePolicy.fromJson({
+      'plan': plan, 'amount': amount, 'unit': plan == 'Premium' ? 'Hours' : 'BusinessDays',
+      'definedBySenior': bySenior, 'updatedByUserId': bySenior ? 7 : null,
+      'updatedAt': bySenior ? '2026-11-25T15:00:00Z' : null,
+    });
+
 class FakeCaseRepository implements VerificationCaseRepository {
   VerifierProfile? profile;
   bool failAvailability = false;
@@ -65,6 +73,11 @@ class FakeCaseRepository implements VerificationCaseRepository {
   String? sentDecision;
   String? sentNotes;
   bool alreadyResolved = false;
+  List<ReviewDeadlinePolicy> deadlines = [_deadline('Premium', 24), _deadline('Free', 3)];
+  bool failDeadlines = false;
+  bool forbidDefine = false;
+  int? definedHours;
+  int? definedDays;
 
   @override
   Future<CaseDetail> getCaseDetail(int caseId) async => CaseDetail(_case(), null, const []);
@@ -123,6 +136,26 @@ class FakeCaseRepository implements VerificationCaseRepository {
     orderedType = sourceType;
     orderedId = sourceId;
     orderedJustification = justification;
+  }
+
+  @override
+  Future<List<ReviewDeadlinePolicy>> getReviewDeadlines() async {
+    if (failDeadlines) throw const ApiException('Sin conexión', status: 503);
+    return deadlines;
+  }
+
+  @override
+  Future<List<ReviewDeadlinePolicy>> defineReviewDeadlines({
+    required int premiumPlanHours,
+    required int freePlanBusinessDays,
+  }) async {
+    if (forbidDefine) throw const ApiException('Solo un Verificador senior define el plazo', status: 403);
+    definedHours = premiumPlanHours;
+    definedDays = freePlanBusinessDays;
+    return deadlines = [
+      _deadline('Premium', premiumPlanHours, bySenior: true),
+      _deadline('Free', freePlanBusinessDays, bySenior: true),
+    ];
   }
 }
 
@@ -653,6 +686,103 @@ void main() {
       expect(_candidate(5).kindLabel, 'Quiz aprobado con revisión');
       expect(_candidate(5, caseType: 'MiniProject').kindLabel, 'Mini proyecto aprobado');
       expect(_candidate(5, type: 'Attempt', caseType: null).key, 'Attempt-5');
+    });
+  });
+
+  group('ReviewDeadlineBloc', () {
+    Future<(ReviewDeadlineBloc, FakeCaseRepository)> loadedBloc({FakeCaseRepository? repo}) async {
+      final fake = repo ?? FakeCaseRepository();
+      final bloc = ReviewDeadlineBloc(caseRepository: fake)..add(const ReviewDeadlinesRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<ReviewDeadlineLoading>(), isA<ReviewDeadlineLoaded>()]));
+      return (bloc, fake);
+    }
+
+    test('carga el plazo del plan mensual y del gratuito', () async {
+      final bloc = ReviewDeadlineBloc(caseRepository: FakeCaseRepository())..add(const ReviewDeadlinesRequested());
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReviewDeadlineLoading>(),
+          isA<ReviewDeadlineLoaded>()
+              .having((s) => s.premium?.amount, 'premium', 24)
+              .having((s) => s.free?.amount, 'free', 3),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('si la carga falla muestra el error', () async {
+      final bloc = ReviewDeadlineBloc(caseRepository: FakeCaseRepository()..failDeadlines = true)
+        ..add(const ReviewDeadlinesRequested());
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReviewDeadlineLoading>(),
+          isA<ReviewDeadlineError>().having((s) => s.message, 'message', 'Sin conexión'),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('guarda el plazo y deja la lista actualizada con el aviso', () async {
+      final (bloc, repo) = await loadedBloc();
+      bloc.add(const ReviewDeadlinesSaved(premiumHours: '12', freeBusinessDays: '2'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReviewDeadlineLoaded>().having((s) => s.saving, 'saving', true),
+          isA<ReviewDeadlineLoaded>()
+              .having((s) => s.premium?.amount, 'premium', 12)
+              .having((s) => s.free?.definedBySenior, 'definedBySenior', true)
+              .having((s) => s.notice, 'notice', 'Plazo de actividad guardado'),
+        ]),
+      );
+      expect(repo.definedHours, 12);
+      expect(repo.definedDays, 2);
+      await bloc.close();
+    });
+
+    test('rechaza horas fuera de 1 a 48 sin llamar al backend', () async {
+      final (bloc, repo) = await loadedBloc();
+      bloc.add(const ReviewDeadlinesSaved(premiumHours: '49', freeBusinessDays: '2'));
+      await expectLater(
+        bloc.stream,
+        emits(isA<ReviewDeadlineLoaded>().having((s) => s.error, 'error', 'Las horas del plan mensual van de 1 a 48')),
+      );
+      expect(repo.definedHours, isNull);
+      await bloc.close();
+    });
+
+    test('rechaza días hábiles fuera de 1 a 5 o vacíos sin llamar al backend', () async {
+      final (bloc, repo) = await loadedBloc();
+      bloc.add(const ReviewDeadlinesSaved(premiumHours: '24', freeBusinessDays: '6'));
+      await expectLater(
+        bloc.stream,
+        emits(isA<ReviewDeadlineLoaded>()
+            .having((s) => s.error, 'error', 'Los días hábiles del plan gratuito van de 1 a 5')),
+      );
+      bloc.add(const ReviewDeadlinesSaved(premiumHours: '', freeBusinessDays: '2'));
+      await expectLater(
+        bloc.stream,
+        emits(isA<ReviewDeadlineLoaded>().having((s) => s.error, 'error', 'Las horas del plan mensual van de 1 a 48')),
+      );
+      expect(repo.definedDays, isNull);
+      await bloc.close();
+    });
+
+    test('quien no es senior recibe el aviso del 403 y conserva el plazo vigente', () async {
+      final (bloc, _) = await loadedBloc(repo: FakeCaseRepository()..forbidDefine = true);
+      bloc.add(const ReviewDeadlinesSaved(premiumHours: '12', freeBusinessDays: '2'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<ReviewDeadlineLoaded>().having((s) => s.saving, 'saving', true),
+          isA<ReviewDeadlineLoaded>()
+              .having((s) => s.error, 'error', 'Solo un Verificador senior define el plazo')
+              .having((s) => s.premium?.amount, 'premium', 24),
+        ]),
+      );
+      await bloc.close();
     });
   });
 

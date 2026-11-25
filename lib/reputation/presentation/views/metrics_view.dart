@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../assessment/application/bloc/reevaluation_bloc.dart';
+import '../../../assessment/application/bloc/review_deadline_bloc.dart';
 import '../../../assessment/presentation/views/reevaluation_view.dart';
+import '../../../assessment/presentation/views/review_deadline_view.dart';
 import '../../../service_locator.dart';
 import '../../../shared/presentation/components/message_view.dart';
 import '../../../shared/presentation/design/app_colors.dart';
@@ -79,6 +81,18 @@ class _MetricsContent extends StatelessWidget {
     );
   }
 
+  // US39 · Plazo de actividad de los casos de cada plan
+  void _openReviewDeadline(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider(
+          create: (_) => getIt<ReviewDeadlineBloc>()..add(const ReviewDeadlinesRequested()),
+          child: const ReviewDeadlineView(),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
@@ -136,6 +150,12 @@ class _MetricsContent extends StatelessWidget {
           onPressed: () => _openReevaluation(context),
           icon: const Icon(Icons.fact_check_outlined),
           label: const Text('Reevaluar resultados'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => _openReviewDeadline(context),
+          icon: const Icon(Icons.timer_outlined),
+          label: const Text('Plazo de actividad'),
         ),
       ],
     );

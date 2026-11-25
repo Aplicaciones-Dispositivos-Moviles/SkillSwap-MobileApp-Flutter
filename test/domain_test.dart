@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:skillswap_verifier/assessment/domain/models/review_deadline_policy.dart';
 import 'package:skillswap_verifier/assessment/domain/models/rubric.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verification_case.dart';
 import 'package:skillswap_verifier/recognition/domain/models/redeemable_benefit.dart';
@@ -116,6 +117,32 @@ void main() {
         'Verifiqué SQL https://skillswap.pe/c/t');
     expect(ShareableCredential.fromJson({...base, 'shareText': 'Verifiqué SQL'}).publication,
         'Verifiqué SQL\nhttps://skillswap.pe/c/t');
+  });
+
+  group('Plazo de actividad', () {
+    test('lee la política y nombra el plan y el plazo', () {
+      final premium = ReviewDeadlinePolicy.fromJson({
+        'plan': 'Premium', 'amount': 24, 'unit': 'Hours', 'definedBySenior': true,
+        'updatedByUserId': 7, 'updatedAt': '2026-11-25T15:00:00Z',
+      });
+      expect(premium.planLabel, 'Plan mensual');
+      expect(premium.amountLabel, '24 horas');
+      expect(premium.definedBySenior, isTrue);
+      expect(premium.updatedAt, isNotNull);
+    });
+
+    test('plazo por defecto del plan gratuito, sin definir por un senior', () {
+      final free = ReviewDeadlinePolicy.fromJson({
+        'plan': 'Free', 'amount': 1, 'unit': 'BusinessDays', 'definedBySenior': false,
+        'updatedByUserId': null, 'updatedAt': null,
+      });
+      expect(free.planLabel, 'Plan gratuito');
+      expect(free.amountLabel, '1 día hábil');
+      expect(free.definedBySenior, isFalse);
+      expect(free.updatedAt, isNull);
+      expect(ReviewDeadlinePolicy.fromJson({'plan': 'Free', 'amount': 3, 'unit': 'BusinessDays'}).amountLabel,
+          '3 días hábiles');
+    });
   });
 
   group('Formatos', () {

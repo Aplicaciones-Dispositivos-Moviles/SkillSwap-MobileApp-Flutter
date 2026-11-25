@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import '../../../shared/infrastructure/network/api_exception.dart';
 import '../../domain/models/reevaluation_candidate.dart';
+import '../../domain/models/review_deadline_policy.dart';
 import '../../domain/models/verification_case.dart';
 import '../../domain/models/verifier_profile.dart';
 import '../../domain/repositories/verification_case_repository.dart';
@@ -116,6 +117,32 @@ class VerificationCaseRepositoryImpl implements VerificationCaseRepository {
       );
     } catch (e) {
       throw ApiException.from(e, 'No se pudo ordenar la reevaluación');
+    }
+  }
+
+  @override
+  Future<List<ReviewDeadlinePolicy>> getReviewDeadlines() async {
+    try {
+      final response = await dio.get('/api/v1/review-deadline-policies');
+      return [for (final p in (response.data as List)) ReviewDeadlinePolicy.fromJson(p as Map<String, dynamic>)];
+    } catch (e) {
+      throw ApiException.from(e, 'No se pudo cargar el plazo de actividad');
+    }
+  }
+
+  @override
+  Future<List<ReviewDeadlinePolicy>> defineReviewDeadlines({
+    required int premiumPlanHours,
+    required int freePlanBusinessDays,
+  }) async {
+    try {
+      final response = await dio.put(
+        '/api/v1/review-deadline-policies',
+        data: {'premiumPlanHours': premiumPlanHours, 'freePlanBusinessDays': freePlanBusinessDays},
+      );
+      return [for (final p in (response.data as List)) ReviewDeadlinePolicy.fromJson(p as Map<String, dynamic>)];
+    } catch (e) {
+      throw ApiException.from(e, 'No se pudo guardar el plazo de actividad');
     }
   }
 }
