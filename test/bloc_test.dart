@@ -11,8 +11,10 @@ import 'package:skillswap_verifier/assessment/domain/repositories/verification_c
 import 'package:skillswap_verifier/iam/application/bloc/session_bloc.dart';
 import 'package:skillswap_verifier/iam/domain/models/auth_user.dart';
 import 'package:skillswap_verifier/iam/domain/repositories/auth_repository.dart';
+import 'package:skillswap_verifier/moderation/application/bloc/dispute_detail_bloc.dart';
 import 'package:skillswap_verifier/moderation/application/bloc/disputes_bloc.dart';
 import 'package:skillswap_verifier/moderation/domain/models/dispute.dart';
+import 'package:skillswap_verifier/moderation/domain/models/dispute_evidence.dart';
 import 'package:skillswap_verifier/moderation/domain/repositories/moderation_repository.dart';
 import 'package:skillswap_verifier/recognition/application/bloc/store_bloc.dart';
 import 'package:skillswap_verifier/recognition/domain/models/redeemable_benefit.dart';
@@ -170,10 +172,32 @@ Dispute _dispute(int id, {bool resolved = false}) => Dispute.fromJson({
       'resolvedAt': resolved ? '2026-11-21T10:00:00Z' : null,
     });
 
+DisputeEvidence _evidence(int id, {bool resolved = false, bool withCertificate = true}) => DisputeEvidence.fromJson({
+      'dispute': {
+        'id': id, 'sourceType': 'CertificateReview', 'sourceReferenceId': 40 + id,
+        'reason': 'DuplicateFile', 'status': resolved ? 'Resolved' : 'Pending',
+        'outcome': resolved ? 'Upheld' : null, 'assignedToSenior': true, 'raisedAt': '2026-11-20T10:00:00Z',
+      },
+      'certificate': withCertificate
+          ? {
+              'id': 40 + id, 'holderName': 'Ana Pérez', 'institutionName': 'Coursera', 'courseName': 'SQL básico',
+              'issueDate': '2026-03-05', 'certificateNumber': 'C-123', 'verificationCode': 'V-9',
+              'verificationUrl': 'https://coursera.org/verify/V-9', 'status': 'Suspicious', 'riskLevel': 'HighRisk',
+              'holderNameMismatch': true, 'createdAt': '2026-11-20T09:00:00Z', 'fileUrl': 'https://files.test/c.pdf',
+            }
+          : null,
+    });
+
 class FakeModerationRepository implements ModerationRepository {
   bool forbid = false;
   bool fail = false;
   bool? askedForResolved;
+  bool alreadyResolved = false;
+  bool missingCertificate = false;
+  bool resolvedEvidence = false;
+  String? sentOutcome;
+  String? sentNotes;
+  int? resolvedId;
 
   @override
   Future<List<Dispute>> getDisputes({bool resolved = false}) async {
@@ -181,6 +205,25 @@ class FakeModerationRepository implements ModerationRepository {
     if (forbid) throw const ApiException('No eres un Verificador habilitado', status: 403);
     if (fail) throw const ApiException('Sin conexión', status: 503);
     return resolved ? [_dispute(9, resolved: true)] : [_dispute(1), _dispute(2)];
+  }
+
+  @override
+  Future<DisputeEvidence> getEvidence(int disputeId) async {
+    if (forbid) throw const ApiException('No eres el revisor de esta disputa', status: 403);
+    return _evidence(disputeId, resolved: resolvedEvidence, withCertificate: !missingCertificate);
+  }
+
+  @override
+  Future<Dispute> resolveDispute(int disputeId, {required String outcome, required String resolutionNotes}) async {
+    if (alreadyResolved) throw const ApiException('La disputa ya fue resuelta', status: 409);
+    resolvedId = disputeId;
+    sentOutcome = outcome;
+    sentNotes = resolutionNotes;
+    return Dispute.fromJson({
+      'id': disputeId, 'sourceType': 'CertificateReview', 'sourceReferenceId': 40 + disputeId,
+      'reason': 'DuplicateFile', 'status': 'Resolved', 'outcome': outcome, 'resolutionNotes': resolutionNotes,
+      'assignedToSenior': true,
+    });
   }
 }
 
@@ -861,6 +904,113 @@ void main() {
           isA<DisputesError>().having((s) => s.message, 'message', 'Sin conexión'),
         ]),
       );
+      await bloc.close();
+    });
+  });
+
+  group('DisputeDetailBloc', () {
+    Future<(DisputeDetailBloc, FakeModerationRepository)> loadedBloc({FakeModerationRepository? repo}) async {
+      final fake = repo ?? FakeModerationRepository();
+      final bloc = DisputeDetailBloc(moderationRepository: fake)..add(const DisputeEvidenceRequested(7));
+      await expectLater(bloc.stream, emitsInOrder([isA<DisputeDetailLoading>(), isA<DisputeDetailLoaded>()]));
+      return (bloc, fake);
+    }
+
+    test('carga la disputa con el certificado en revisión', () async {
+      final bloc = DisputeDetailBloc(moderationRepository: FakeModerationRepository())
+        ..add(const DisputeEvidenceRequested(7));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<DisputeDetailLoading>(),
+          isA<DisputeDetailLoaded>()
+              .having((s) => s.evidence.dispute.id, 'dispute', 7)
+              .having((s) => s.evidence.certificate?.courseName, 'course', 'SQL básico'),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('si no eres el revisor muestra el motivo del 403', () async {
+      final bloc = DisputeDetailBloc(moderationRepository: FakeModerationRepository()..forbid = true)
+        ..add(const DisputeEvidenceRequested(7));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<DisputeDetailLoading>(),
+          isA<DisputeDetailError>().having((s) => s.message, 'message', 'No eres el revisor de esta disputa'),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('verifica el certificado con Upheld y las observaciones sin espacios sobrantes', () async {
+      final (bloc, repo) = await loadedBloc();
+      bloc.add(const DisputeResolutionSubmitted(verify: true, notes: '  El archivo es original  '));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<DisputeDetailLoaded>().having((s) => s.submitting, 'submitting', true),
+          isA<DisputeResolved>().having((s) => s.resolved.outcomeLabel, 'outcome', 'Certificado verificado'),
+        ]),
+      );
+      expect(repo.resolvedId, 7);
+      expect(repo.sentOutcome, 'Upheld');
+      expect(repo.sentNotes, 'El archivo es original');
+      await bloc.close();
+    });
+
+    test('rechaza el certificado con Overturned', () async {
+      final (bloc, repo) = await loadedBloc();
+      bloc.add(const DisputeResolutionSubmitted(verify: false, notes: 'Es de otro estudiante'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([isA<DisputeDetailLoaded>(), isA<DisputeResolved>()]),
+      );
+      expect(repo.sentOutcome, 'Overturned');
+      await bloc.close();
+    });
+
+    test('exige observaciones y no pasa de 2000 caracteres, sin llamar al backend', () async {
+      final (bloc, repo) = await loadedBloc();
+      bloc.add(const DisputeResolutionSubmitted(verify: true, notes: '   '));
+      await expectLater(
+        bloc.stream,
+        emits(isA<DisputeDetailLoaded>().having((s) => s.error, 'error', 'Escribe tus observaciones antes de decidir')),
+      );
+      bloc.add(DisputeResolutionSubmitted(verify: true, notes: 'a' * (Dispute.notesMaxLength + 1)));
+      await expectLater(
+        bloc.stream,
+        emits(isA<DisputeDetailLoaded>().having(
+          (s) => s.error,
+          'error',
+          'Las observaciones no pueden pasar de ${Dispute.notesMaxLength} caracteres',
+        )),
+      );
+      expect(repo.resolvedId, isNull);
+      await bloc.close();
+    });
+
+    test('un 409 avisa que la disputa cambió y marca la lista como desactualizada', () async {
+      final (bloc, _) = await loadedBloc(repo: FakeModerationRepository()..alreadyResolved = true);
+      bloc.add(const DisputeResolutionSubmitted(verify: true, notes: 'Está bien'));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<DisputeDetailLoaded>().having((s) => s.submitting, 'submitting', true),
+          isA<DisputeDetailLoaded>()
+              .having((s) => s.error, 'error', 'La disputa ya fue resuelta')
+              .having((s) => s.outdated, 'outdated', true),
+        ]),
+      );
+      await bloc.close();
+    });
+
+    test('una disputa ya resuelta no se puede volver a resolver', () async {
+      final (bloc, repo) = await loadedBloc(repo: FakeModerationRepository()..resolvedEvidence = true);
+      bloc.add(const DisputeResolutionSubmitted(verify: false, notes: 'Otra vez'));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(repo.resolvedId, isNull);
       await bloc.close();
     });
   });

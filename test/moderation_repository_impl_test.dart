@@ -47,6 +47,38 @@ void main() {
     expect(adapter.request!.queryParameters, {'status': 'Resolved'});
   });
 
+  test('pide la evidencia de la disputa', () async {
+    final adapter = DisputesAdapter(body: {
+      'dispute': {'id': 12, 'sourceType': 'CertificateReview', 'sourceReferenceId': 77, 'reason': 'DuplicateFile'},
+      'certificate': null,
+    });
+    final evidence = await repositoryWith(adapter).getEvidence(12);
+    expect(adapter.request!.method, 'GET');
+    expect(adapter.request!.path, '/api/v1/disputes/12/evidence');
+    expect(evidence.dispute.id, 12);
+    expect(evidence.certificate, isNull);
+  });
+
+  test('resuelve la disputa con PATCH, el resultado y las observaciones', () async {
+    final adapter = DisputesAdapter(body: {
+      'id': 12, 'sourceType': 'CertificateReview', 'sourceReferenceId': 77, 'reason': 'DuplicateFile',
+      'status': 'Resolved', 'outcome': 'Overturned', 'resolutionNotes': 'Es falso',
+    });
+    final resolved = await repositoryWith(adapter).resolveDispute(12, outcome: 'Overturned', resolutionNotes: 'Es falso');
+    expect(adapter.request!.method, 'PATCH');
+    expect(adapter.request!.path, '/api/v1/disputes/12/resolve');
+    expect(adapter.request!.data, {'outcome': 'Overturned', 'resolutionNotes': 'Es falso'});
+    expect(resolved.outcomeLabel, 'Certificado rechazado');
+  });
+
+  test('un 409 al resolver llega con el motivo del backend', () async {
+    final adapter = DisputesAdapter(status: 409, body: {'title': 'AlreadyResolved', 'detail': 'La disputa ya fue resuelta'});
+    await expectLater(
+      repositoryWith(adapter).resolveDispute(12, outcome: 'Upheld', resolutionNotes: 'Bien'),
+      throwsA(isA<ApiException>().having((e) => e.status, 'status', 409)),
+    );
+  });
+
   test('un 403 llega con el motivo del backend', () async {
     final adapter = DisputesAdapter(status: 403, body: {'title': 'NotAVerifier', 'detail': 'No eres un Verificador'});
     await expectLater(

@@ -43,6 +43,13 @@ class Dispute {
         resolvedAt: parseDate(json['resolvedAt']),
       );
 
+  // Las observaciones de la resolución son obligatorias y el backend acepta hasta 2000 caracteres.
+  static const notesMaxLength = 2000;
+
+  // Resultados que acepta el backend: Upheld verifica el certificado y Overturned lo rechaza.
+  static const upheld = 'Upheld';
+  static const overturned = 'Overturned';
+
   bool get isPending => status == 'Pending';
 
   // Motivos que el backend detectó, con su texto en español; uno desconocido se muestra tal cual.
