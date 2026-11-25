@@ -4,6 +4,7 @@ import 'package:get_it/get_it.dart';
 import 'assessment/application/bloc/case_review_bloc.dart';
 import 'assessment/application/bloc/cases_bloc.dart';
 import 'assessment/application/bloc/reevaluation_bloc.dart';
+import 'assessment/application/bloc/review_deadline_bloc.dart';
 import 'assessment/domain/repositories/verification_case_repository.dart';
 import 'assessment/infrastructure/repositories/verification_case_repository_impl.dart';
 import 'iam/application/bloc/session_bloc.dart';
@@ -67,6 +68,7 @@ void setupServiceLocator() {
       ));
   getIt.registerFactory<CaseReviewBloc>(() => CaseReviewBloc(caseRepository: getIt<VerificationCaseRepository>()));
   getIt.registerFactory<ReevaluationBloc>(() => ReevaluationBloc(caseRepository: getIt<VerificationCaseRepository>()));
+  getIt.registerFactory<ReviewDeadlineBloc>(() => ReviewDeadlineBloc(caseRepository: getIt<VerificationCaseRepository>()));
   getIt.registerFactory<WalletBloc>(
     () => WalletBloc(userId: _currentUserId(), recognitionRepository: getIt<RecognitionRepository>()),
   );
