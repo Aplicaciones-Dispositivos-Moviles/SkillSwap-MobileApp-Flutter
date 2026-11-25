@@ -47,17 +47,13 @@ class _LoginViewState extends State<LoginView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Center(
-                    child: Container(
-                      width: 56,
-                      height: 56,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(16)),
-                      child: Text('⇄', style: text.headlineSmall?.copyWith(color: Colors.white)),
-                    ),
+                  Center(child: Image.asset('assets/images/skillswap_logo.png', width: 220)),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Verificador',
+                    textAlign: TextAlign.center,
+                    style: text.titleLarge?.copyWith(color: AppColors.primary),
                   ),
-                  const SizedBox(height: 12),
-                  Text('SkillSwap Verificador', textAlign: TextAlign.center, style: text.titleLarge),
                   const SizedBox(height: 4),
                   Text(
                     'Revisa casos y cuida la calidad de la plataforma',
