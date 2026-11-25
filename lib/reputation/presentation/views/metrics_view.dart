@@ -5,6 +5,8 @@ import '../../../assessment/application/bloc/reevaluation_bloc.dart';
 import '../../../assessment/application/bloc/review_deadline_bloc.dart';
 import '../../../assessment/presentation/views/reevaluation_view.dart';
 import '../../../assessment/presentation/views/review_deadline_view.dart';
+import '../../../moderation/application/bloc/disputes_bloc.dart';
+import '../../../moderation/presentation/views/disputes_view.dart';
 import '../../../service_locator.dart';
 import '../../../shared/presentation/components/message_view.dart';
 import '../../../shared/presentation/design/app_colors.dart';
@@ -76,6 +78,18 @@ class _MetricsContent extends StatelessWidget {
         builder: (_) => BlocProvider(
           create: (_) => getIt<ReevaluationBloc>()..add(const ReevaluationsRequested()),
           child: const ReevaluationView(),
+        ),
+      ),
+    );
+  }
+
+  // US34 · Disputas por certificados sospechosos asignadas al Verificador
+  void _openDisputes(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider(
+          create: (_) => getIt<DisputesBloc>()..add(const DisputesRequested()),
+          child: const DisputesView(),
         ),
       ),
     );
@@ -156,6 +170,12 @@ class _MetricsContent extends StatelessWidget {
           onPressed: () => _openReviewDeadline(context),
           icon: const Icon(Icons.timer_outlined),
           label: const Text('Plazo de actividad'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => _openDisputes(context),
+          icon: const Icon(Icons.gavel_outlined),
+          label: const Text('Disputas pendientes'),
         ),
       ],
     );

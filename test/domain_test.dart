@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:skillswap_verifier/assessment/domain/models/review_deadline_policy.dart';
 import 'package:skillswap_verifier/assessment/domain/models/rubric.dart';
 import 'package:skillswap_verifier/assessment/domain/models/verification_case.dart';
+import 'package:skillswap_verifier/moderation/domain/models/dispute.dart';
 import 'package:skillswap_verifier/recognition/domain/models/redeemable_benefit.dart';
 import 'package:skillswap_verifier/recognition/domain/models/shareable_credential.dart';
 import 'package:skillswap_verifier/recognition/domain/models/wallet.dart';
@@ -142,6 +143,47 @@ void main() {
       expect(free.updatedAt, isNull);
       expect(ReviewDeadlinePolicy.fromJson({'plan': 'Free', 'amount': 3, 'unit': 'BusinessDays'}).amountLabel,
           '3 días hábiles');
+    });
+  });
+
+  group('Disputa', () {
+    final json = {
+      'id': 12,
+      'sourceType': 'CertificateReview',
+      'sourceReferenceId': 77,
+      'reason': 'DuplicateFile, HolderNameMismatch',
+      'status': 'Pending',
+      'outcome': null,
+      'resolutionNotes': null,
+      'assignedVerifierUserId': 7,
+      'assignedToSenior': true,
+      'assignedAt': '2026-11-20T10:05:00Z',
+      'raisedAt': '2026-11-20T10:00:00Z',
+      'resolvedAt': null,
+    };
+
+    test('lee la disputa pendiente y traduce los motivos', () {
+      final dispute = Dispute.fromJson(json);
+      expect(dispute.id, 12);
+      expect(dispute.sourceLabel, 'Certificado sospechoso');
+      expect(dispute.isPending, isTrue);
+      expect(dispute.outcomeLabel, isNull);
+      expect(dispute.reasons, [
+        'Archivo ya registrado por otro Estudiante',
+        'El titular no coincide con el nombre registrado',
+      ]);
+    });
+
+    test('una disputa resuelta dice cómo quedó el certificado', () {
+      final upheld = Dispute.fromJson({...json, 'status': 'Resolved', 'outcome': 'Upheld'});
+      final overturned = Dispute.fromJson({...json, 'status': 'Resolved', 'outcome': 'Overturned'});
+      expect(upheld.isPending, isFalse);
+      expect(upheld.outcomeLabel, 'Certificado verificado');
+      expect(overturned.outcomeLabel, 'Certificado rechazado');
+    });
+
+    test('un motivo desconocido se muestra tal cual y uno vacío se ignora', () {
+      expect(Dispute.fromJson({...json, 'reason': 'NuevaRegla,'}).reasons, ['NuevaRegla']);
     });
   });
 

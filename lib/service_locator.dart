@@ -10,6 +10,9 @@ import 'assessment/infrastructure/repositories/verification_case_repository_impl
 import 'iam/application/bloc/session_bloc.dart';
 import 'iam/domain/repositories/auth_repository.dart';
 import 'iam/infrastructure/repositories/auth_repository_impl.dart';
+import 'moderation/application/bloc/disputes_bloc.dart';
+import 'moderation/domain/repositories/moderation_repository.dart';
+import 'moderation/infrastructure/repositories/moderation_repository_impl.dart';
 import 'recognition/application/bloc/share_bloc.dart';
 import 'recognition/application/bloc/store_bloc.dart';
 import 'recognition/application/bloc/wallet_bloc.dart';
@@ -56,6 +59,7 @@ void setupServiceLocator() {
   getIt.registerLazySingleton<VerificationCaseRepository>(() => VerificationCaseRepositoryImpl(dio: getIt<Dio>()));
   getIt.registerLazySingleton<ReputationRepository>(() => ReputationRepositoryImpl(dio: getIt<Dio>()));
   getIt.registerLazySingleton<RecognitionRepository>(() => RecognitionRepositoryImpl(dio: getIt<Dio>()));
+  getIt.registerLazySingleton<ModerationRepository>(() => ModerationRepositoryImpl(dio: getIt<Dio>()));
 
   // ---------- BLoCs ----------
   getIt.registerLazySingleton<SessionBloc>(() => SessionBloc(authRepository: getIt<AuthRepository>()));
@@ -69,6 +73,7 @@ void setupServiceLocator() {
   getIt.registerFactory<CaseReviewBloc>(() => CaseReviewBloc(caseRepository: getIt<VerificationCaseRepository>()));
   getIt.registerFactory<ReevaluationBloc>(() => ReevaluationBloc(caseRepository: getIt<VerificationCaseRepository>()));
   getIt.registerFactory<ReviewDeadlineBloc>(() => ReviewDeadlineBloc(caseRepository: getIt<VerificationCaseRepository>()));
+  getIt.registerFactory<DisputesBloc>(() => DisputesBloc(moderationRepository: getIt<ModerationRepository>()));
   getIt.registerFactory<WalletBloc>(
     () => WalletBloc(userId: _currentUserId(), recognitionRepository: getIt<RecognitionRepository>()),
   );
