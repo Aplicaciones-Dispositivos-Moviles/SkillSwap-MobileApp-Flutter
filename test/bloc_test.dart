@@ -11,6 +11,9 @@ import 'package:skillswap_verifier/assessment/domain/repositories/verification_c
 import 'package:skillswap_verifier/iam/application/bloc/session_bloc.dart';
 import 'package:skillswap_verifier/iam/domain/models/auth_user.dart';
 import 'package:skillswap_verifier/iam/domain/repositories/auth_repository.dart';
+import 'package:skillswap_verifier/moderation/application/bloc/disputes_bloc.dart';
+import 'package:skillswap_verifier/moderation/domain/models/dispute.dart';
+import 'package:skillswap_verifier/moderation/domain/repositories/moderation_repository.dart';
 import 'package:skillswap_verifier/recognition/application/bloc/store_bloc.dart';
 import 'package:skillswap_verifier/recognition/domain/models/redeemable_benefit.dart';
 import 'package:skillswap_verifier/recognition/domain/models/shareable_credential.dart';
@@ -156,6 +159,28 @@ class FakeCaseRepository implements VerificationCaseRepository {
       _deadline('Premium', premiumPlanHours, bySenior: true),
       _deadline('Free', freePlanBusinessDays, bySenior: true),
     ];
+  }
+}
+
+Dispute _dispute(int id, {bool resolved = false}) => Dispute.fromJson({
+      'id': id, 'sourceType': 'CertificateReview', 'sourceReferenceId': 40 + id,
+      'reason': 'DuplicateFile, HolderNameMismatch', 'status': resolved ? 'Resolved' : 'Pending',
+      'outcome': resolved ? 'Upheld' : null, 'resolutionNotes': resolved ? 'El archivo es legítimo' : null,
+      'assignedToSenior': true, 'raisedAt': '2026-11-20T10:00:00Z',
+      'resolvedAt': resolved ? '2026-11-21T10:00:00Z' : null,
+    });
+
+class FakeModerationRepository implements ModerationRepository {
+  bool forbid = false;
+  bool fail = false;
+  bool? askedForResolved;
+
+  @override
+  Future<List<Dispute>> getDisputes({bool resolved = false}) async {
+    askedForResolved = resolved;
+    if (forbid) throw const ApiException('No eres un Verificador habilitado', status: 403);
+    if (fail) throw const ApiException('Sin conexión', status: 503);
+    return resolved ? [_dispute(9, resolved: true)] : [_dispute(1), _dispute(2)];
   }
 }
 
@@ -780,6 +805,60 @@ void main() {
           isA<ReviewDeadlineLoaded>()
               .having((s) => s.error, 'error', 'Solo un Verificador senior define el plazo')
               .having((s) => s.premium?.amount, 'premium', 24),
+        ]),
+      );
+      await bloc.close();
+    });
+  });
+
+  group('DisputesBloc', () {
+    test('carga las disputas pendientes', () async {
+      final repo = FakeModerationRepository();
+      final bloc = DisputesBloc(moderationRepository: repo)..add(const DisputesRequested());
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<DisputesLoading>(),
+          isA<DisputesLoaded>()
+              .having((s) => s.disputes.length, 'disputes', 2)
+              .having((s) => s.resolved, 'resolved', false),
+        ]),
+      );
+      expect(repo.askedForResolved, isFalse);
+      await bloc.close();
+    });
+
+    test('pide las resueltas cuando se cambia el filtro', () async {
+      final repo = FakeModerationRepository();
+      final bloc = DisputesBloc(moderationRepository: repo)..add(const DisputesRequested(resolved: true));
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<DisputesLoading>(),
+          isA<DisputesLoaded>()
+              .having((s) => s.resolved, 'resolved', true)
+              .having((s) => s.disputes.single.outcomeLabel, 'outcome', 'Certificado verificado'),
+        ]),
+      );
+      expect(repo.askedForResolved, isTrue);
+      await bloc.close();
+    });
+
+    test('quien no es Verificador habilitado recibe 403', () async {
+      final bloc = DisputesBloc(moderationRepository: FakeModerationRepository()..forbid = true)
+        ..add(const DisputesRequested());
+      await expectLater(bloc.stream, emitsInOrder([isA<DisputesLoading>(), isA<DisputesForbidden>()]));
+      await bloc.close();
+    });
+
+    test('si la carga falla muestra el error', () async {
+      final bloc = DisputesBloc(moderationRepository: FakeModerationRepository()..fail = true)
+        ..add(const DisputesRequested());
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          isA<DisputesLoading>(),
+          isA<DisputesError>().having((s) => s.message, 'message', 'Sin conexión'),
         ]),
       );
       await bloc.close();
